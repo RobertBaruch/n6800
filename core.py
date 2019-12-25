@@ -1,3 +1,27 @@
+# core.py: Core code for the 6800 CPU
+# Copyright (C) 2019 Robert Baruch <robert.c.baruch@gmail.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Generate and verify code:
+# python3 core.py --insn jmp generate -t il > core.il
+# sby -f core.sby
+
+# Simulate code:
+# python3 core.py
+# gtkwave test.gtkw
+
 from enum import IntEnum
 import importlib
 from typing import List, Dict, Tuple, Optional

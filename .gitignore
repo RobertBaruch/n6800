@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Yosys-specific
+*.il
+*_bmc/
+*_cover/
+*.gtkw
+*.vcd
+
 # C extensions
 *.so
 
