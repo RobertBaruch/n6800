@@ -1,0 +1,19 @@
+[tasks]
+cover
+bmc
+
+[options]
+cover: mode cover
+bmc: mode bmc
+depth 24
+multiclock off
+
+[engines]
+smtbmc boolector
+
+[script]
+read_ilang core.il
+prep -top top
+
+[files]
+core.il
