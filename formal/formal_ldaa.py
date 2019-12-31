@@ -24,21 +24,23 @@ class Formal(Verification):
         pass
 
     def valid(self, instr: Value) -> Value:
-        return instr.matches("01111110")
+        return instr.matches("10110110")
 
     def check(self, m: Module, instr: Value, data: FormalData):
         m.d.comb += [
-            Assert(data.post_ccs == data.pre_ccs),
-            Assert(data.post_a == data.pre_a),
             Assert(data.post_b == data.pre_b),
             Assert(data.post_x == data.pre_x),
             Assert(data.post_sp == data.pre_sp),
             Assert(data.addresses_written == 0),
         ]
         m.d.comb += [
-            Assert(data.addresses_read == 2),
+            Assert(data.post_pc == data.plus16(data.pre_pc, 3)),
+            Assert(data.addresses_read == 3),
             Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
             Assert(data.read_addr[1] == data.plus16(data.pre_pc, 2)),
             Assert(
-                data.post_pc == Cat(data.read_data[1], data.read_data[0])),
+                data.read_addr[2] == Cat(data.read_data[1], data.read_data[0])),
+            Assert(data.post_a == data.read_data[2]),
         ]
+        self.assertFlags(m, data.post_ccs, data.pre_ccs,
+                         Z=(data.post_a == 0), N=data.post_a[7], V=0)

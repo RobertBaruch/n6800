@@ -27,6 +27,7 @@ import importlib
 from typing import List, Dict, Tuple, Optional
 
 from formal.verification import FormalData, Verification
+from alu8 import ALU8Func, ALU8
 
 from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux
 from nmigen import ClockDomain, ClockSignal
@@ -95,16 +96,14 @@ class Core(Elaboratable):
         self.src8_1 = Signal(8)  # Input 1 of the ALU
         self.src8_2 = Signal(8)  # Input 2 of the ALU
         self.alu8 = Signal(8)   # Output from the ALU
-        self.src16 = Signal(16)     # Input to 16-bit inc/dec
-        self.incdec16 = Signal(16)  # Output from 16-bit inc/dec
+        self.ccs = Signal(8)    # Flags from the ALU
 
         # selectors for busses
         self.src8_1_select = Signal(Reg8)
         self.src8_2_select = Signal(Reg8)
-        self.alu8_write = Signal(len(Reg8.__members__))
-        self.src16_select = Signal(Reg16)
-        self.src16_write = Signal(len(Reg16.__members__))
-        self.incdec16_write = Signal(len(Reg16.__members__))
+
+        # function control
+        self.alu8_func = Signal(ALU8Func)
 
         # mappings of selectors to signals. The second tuple element is
         # whether the register is read/write.
@@ -147,25 +146,31 @@ class Core(Elaboratable):
 
     def elaborate(self, platform: Platform) -> Module:
         m = Module()
+        m.submodules.alu = alu = ALU8()
 
+        # defaults
         m.d.comb += self.end_instr_flag.eq(0)
+        m.d.comb += self.src8_1_select.eq(Reg8.NONE)
+        m.d.comb += self.src8_2_select.eq(Reg8.NONE)
+        m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
 
         self.src_bus_setup(m, self.reg8_map, self.src8_1, self.src8_1_select)
         self.src_bus_setup(m, self.reg8_map, self.src8_2, self.src8_2_select)
-        self.dest_bus_setup(m, self.reg8_map, self.alu8, self.alu8_write)
-        self.src_bus_setup(m, self.reg16_map, self.src16, self.src16_select)
-        self.dest_bus_setup(m, self.reg16_map, self.src16, self.src16_write)
-        self.dest_bus_setup(m, self.reg16_map,
-                            self.incdec16, self.incdec16_write)
+
+        m.d.comb += alu.input1.eq(self.src8_1)
+        m.d.comb += alu.input2.eq(self.src8_2)
+        m.d.comb += self.alu8.eq(alu.output)
+        m.d.comb += alu.func.eq(self.alu8_func)
+        m.d.comb += self.ccs.eq(alu.ccs)
 
         self.reset_handler(m)
-        self.end_instr_flag_handler(m)
         with m.If(self.reset_state == 3):
             with m.If(self.cycle == 0):
                 self.fetch(m)
             with m.Else():
                 self.execute(m)
         self.maybe_do_formal_verification(m)
+        self.end_instr_flag_handler(m)
 
         return m
 
@@ -234,13 +239,13 @@ class Core(Elaboratable):
             with m.If((self.cycle == 0) & (self.reset_state == 3)):
                 with m.If(self.verification.valid(self.Din)):
                     self.formalData.preSnapshot(
-                        m, self.Din, self.a, self.b, self.x, self.sp, self.pc)
+                        m, self.Din, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
                 with m.Else():
                     self.formalData.noSnapshot(m)
 
                 with m.If(self.formalData.snapshot_taken):
                     self.formalData.postSnapshot(
-                        m, self.a, self.b, self.x, self.sp, self.pc)
+                        m, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
                     self.verification.check(m, self.instr, self.formalData)
 
     def execute(self, m: Module):
@@ -250,6 +255,16 @@ class Core(Elaboratable):
                 self.NOP(m)
             with m.Case("01111110"):  # JMP ext
                 self.JMPext(m)
+            with m.Case("10110110"):  # LDAA ext
+                self.LDAAext(m)
+            with m.Case("10110000"):  # SUBA ext
+                self.SUBAext(m)
+            with m.Case("10110010"):  # SBCA ext
+                self.SBCAext(m)
+            with m.Case("10111001"):  # ADCA ext
+                self.ADCAext(m)
+            with m.Case("10111011"):  # ADDA ext
+                self.ADDAext(m)
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
 
@@ -257,6 +272,82 @@ class Core(Elaboratable):
         self.end_instr(m, self.pc)
 
     def JMPext(self, m: Module):
+        operand = self.mode_ext(m)
+
+        with m.If(self.cycle == 2):
+            self.end_instr(m, operand)
+
+    def read_byte(self, m: Module, cycle: int, addr: Statement, comb_dest: Signal):
+        """Reads a byte starting from the given cycle.
+
+        The byte read is combinatorically placed in comb_dest.
+        """
+        with m.If(self.cycle == cycle):
+            m.d.ph1 += self.Addr.eq(addr)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == cycle + 1):
+            m.d.comb += comb_dest.eq(self.Din)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+
+    def LDAAext(self, m: Module):
+        operand = self.mode_ext(m)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_1)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def ADDAext(self, m: Module):
+        operand = self.mode_ext(m)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.src8_1.eq(self.a)
+            m.d.comb += self.alu8_func.eq(ALU8Func.ADD)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def ADCAext(self, m: Module):
+        operand = self.mode_ext(m)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.src8_1.eq(self.a)
+            m.d.comb += self.alu8_func.eq(ALU8Func.ADC)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def SUBAext(self, m: Module):
+        operand = self.mode_ext(m)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.src8_1.eq(self.a)
+            m.d.comb += self.alu8_func.eq(ALU8Func.SUB)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def SBCAext(self, m: Module):
+        operand = self.mode_ext(m)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.src8_1.eq(self.a)
+            m.d.comb += self.alu8_func.eq(ALU8Func.SBC)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def mode_ext(self, m: Module) -> Statement:
+        """Generates logic to get the 16-bit operand for extended mode instructions.
+
+        Returns a Statement valid for cycle 2 only, containing the
+        16-bit operand. After cycle 2, tmp16 contains the operand.
+        """
+        operand = Cat(self.Din, self.tmp16[8:])
+
         with m.If(self.cycle == 1):
             m.d.ph1 += self.tmp16[8:].eq(self.Din)
             m.d.ph1 += self.pc.eq(self.pc + 1)
@@ -267,12 +358,20 @@ class Core(Elaboratable):
                 self.formalData.read(m, self.Addr, self.Din)
 
         with m.If(self.cycle == 2):
-            new_pc = Cat(self.Din, self.tmp16[8:])
-            self.end_instr(m, new_pc)
+            m.d.ph1 += self.tmp16[:8].eq(self.Din)
+            m.d.ph1 += self.pc.eq(self.pc + 1)
+            m.d.ph1 += self.cycle.eq(3)
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
+        return operand
+
     def end_instr(self, m: Module, addr: Statement):
+        """Ends the instruction.
+
+        Loads the PC and Addr register with the given addr, sets R/W mode
+        to read, and sets the cycle to 0 at the end of the current cycle.
+        """
         m.d.comb += self.end_instr_addr.eq(addr)
         m.d.comb += self.end_instr_flag.eq(1)
 
@@ -305,8 +404,8 @@ if __name__ == "__main__":
         # m.d.comb += Assume(rst == (cycle2 < 8))
 
         with m.If(cycle2 == 20):
-            m.d.ph1 += Cover(verification.valid(core.instr))
-            m.d.ph1 += Assume(verification.valid(core.instr))
+            m.d.ph1 += Cover(core.formalData.snapshot_taken)
+            m.d.ph1 += Assume(core.formalData.snapshot_taken)
 
         # Verify reset does what it's supposed to
         with m.If(Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst)):
