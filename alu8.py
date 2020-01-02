@@ -40,6 +40,11 @@ class ALU8Func(IntEnum):
     ADC = 3
     SUB = 4
     SBC = 5
+    AND = 6
+    # BIT is the same as AND, just don't store the output.
+    # CMP is the same as SUB, just don't store the output.
+    EOR = 7
+    ORA = 8
 
 
 class ALU8(Elaboratable):
@@ -69,9 +74,9 @@ class ALU8(Elaboratable):
 
         with m.Switch(self.func):
             with m.Case(ALU8Func.LD):
-                m.d.comb += self.output.eq(self.input1)
-                m.d.comb += self._ccs[_Z].eq(self.input1 == 0)
-                m.d.comb += self._ccs[_N].eq(self.input1[7])
+                m.d.comb += self.output.eq(self.input2)
+                m.d.comb += self._ccs[_Z].eq(self.output == 0)
+                m.d.comb += self._ccs[_N].eq(self.output[7])
                 m.d.comb += self._ccs[_V].eq(0)
 
             with m.Case(ALU8Func.ADD, ALU8Func.ADC):
@@ -105,6 +110,25 @@ class ALU8(Elaboratable):
                 m.d.comb += self._ccs[_Z].eq(self.output == 0)
                 m.d.comb += self._ccs[_V].eq(overflow)
                 m.d.comb += self._ccs[_C].eq(~carry8)
+
+            with m.Case(ALU8Func.AND):
+                m.d.comb += self.output.eq(self.input1 & self.input2)
+                m.d.comb += self._ccs[_Z].eq(self.output == 0)
+                m.d.comb += self._ccs[_N].eq(self.output[7])
+                m.d.comb += self._ccs[_V].eq(0)
+
+            with m.Case(ALU8Func.EOR):
+                m.d.comb += self.output.eq(self.input1 ^ self.input2)
+                m.d.comb += self._ccs[_Z].eq(self.output == 0)
+                m.d.comb += self._ccs[_N].eq(self.output[7])
+                m.d.comb += self._ccs[_V].eq(0)
+
+            with m.Case(ALU8Func.ORA):
+                m.d.comb += self.output.eq(self.input1 | self.input2)
+                m.d.comb += self._ccs[_Z].eq(self.output == 0)
+                m.d.comb += self._ccs[_N].eq(self.output[7])
+                m.d.comb += self._ccs[_V].eq(0)
+
         return m
 
 

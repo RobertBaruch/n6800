@@ -81,6 +81,7 @@ class Core(Elaboratable):
         self.Din = Signal(8)
         self.Dout = Signal(8)
         self.RW = Signal(reset=1)  # 1 = read, 0 = write
+        self.VMA = Signal()  # 1 = address is valid
 
         # registers
         self.a = Signal(8, reset_less=True)
@@ -153,6 +154,7 @@ class Core(Elaboratable):
         m.d.comb += self.src8_1_select.eq(Reg8.NONE)
         m.d.comb += self.src8_2_select.eq(Reg8.NONE)
         m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
+        m.d.ph1 += self.VMA.eq(1)
 
         self.src_bus_setup(m, self.reg8_map, self.src8_1, self.src8_1_select)
         self.src_bus_setup(m, self.reg8_map, self.src8_2, self.src8_2_select)
@@ -255,27 +257,30 @@ class Core(Elaboratable):
                 self.NOP(m)
             with m.Case("01111110"):  # JMP ext
                 self.JMPext(m)
-            with m.Case("10110110"):  # LDAA ext
-                self.LDAAext(m)
-            with m.Case("10110000"):  # SUBA ext
-                self.SUBAext(m)
-            with m.Case("10110010"):  # SBCA ext
-                self.SBCAext(m)
-            with m.Case("10111001"):  # ADCA ext
-                self.ADCAext(m)
-            with m.Case("10111011"):  # ADDA ext
-                self.ADDAext(m)
+            with m.Case("1-110110"):  # LDA ext
+                self.ALUext(m, ALU8Func.LD)
+            with m.Case("1-110000"):  # SUB ext
+                self.ALUext(m, ALU8Func.SUB)
+            with m.Case("1-110001"):  # CMP ext
+                self.ALUext(m, ALU8Func.SUB, store=False)
+            with m.Case("1-110010"):  # SBC ext
+                self.ALUext(m, ALU8Func.SBC)
+            with m.Case("1-110100"):  # AND ext
+                self.ALUext(m, ALU8Func.AND)
+            with m.Case("1-110101"):  # BIT ext
+                self.ALUext(m, ALU8Func.AND, store=False)
+            with m.Case("1-110111"):  # STA ext
+                self.STAext(m)
+            with m.Case("1-111000"):  # EOR ext
+                self.ALUext(m, ALU8Func.EOR)
+            with m.Case("1-111001"):  # ADC ext
+                self.ALUext(m, ALU8Func.ADC)
+            with m.Case("1-111010"):  # ORA ext
+                self.ALUext(m, ALU8Func.ORA)
+            with m.Case("1-111011"):  # ADD ext
+                self.ALUext(m, ALU8Func.ADD)
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
-
-    def NOP(self, m: Module):
-        self.end_instr(m, self.pc)
-
-    def JMPext(self, m: Module):
-        operand = self.mode_ext(m)
-
-        with m.If(self.cycle == 2):
-            self.end_instr(m, operand)
 
     def read_byte(self, m: Module, cycle: int, addr: Statement, comb_dest: Signal):
         """Reads a byte starting from the given cycle.
@@ -291,62 +296,62 @@ class Core(Elaboratable):
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
-    def LDAAext(self, m: Module):
+    def ALUext(self, m: Module, func: ALU8Func, store: bool = True):
         operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_1)
+        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+        b = self.instr[6]
 
         with m.If(self.cycle == 3):
+            m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+            m.d.comb += self.alu8_func.eq(func)
+            if store:
+                with m.If(b):
+                    m.d.ph1 += self.b.eq(self.alu8)
+                with m.Else():
+                    m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def JMPext(self, m: Module):
+        operand = self.mode_ext(m)
+
+        with m.If(self.cycle == 2):
+            self.end_instr(m, operand)
+
+    def NOP(self, m: Module):
+        self.end_instr(m, self.pc)
+
+    def STAext(self, m: Module):
+        operand = self.mode_ext(m)
+
+        b = self.instr[6]
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(operand)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.Addr.eq(operand)
+            m.d.ph1 += self.Dout.eq(Mux(b, self.b, self.a))
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.cycle.eq(4)
+
+        with m.If(self.cycle == 4):
+            if self.verification is not None:
+                self.formalData.write(m, self.Addr, self.Dout)
+            m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
             m.d.comb += self.alu8_func.eq(ALU8Func.LD)
-            m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
-
-    def ADDAext(self, m: Module):
-        operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
-
-        with m.If(self.cycle == 3):
-            m.d.comb += self.src8_1.eq(self.a)
-            m.d.comb += self.alu8_func.eq(ALU8Func.ADD)
-            m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
-
-    def ADCAext(self, m: Module):
-        operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
-
-        with m.If(self.cycle == 3):
-            m.d.comb += self.src8_1.eq(self.a)
-            m.d.comb += self.alu8_func.eq(ALU8Func.ADC)
-            m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
-
-    def SUBAext(self, m: Module):
-        operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
-
-        with m.If(self.cycle == 3):
-            m.d.comb += self.src8_1.eq(self.a)
-            m.d.comb += self.alu8_func.eq(ALU8Func.SUB)
-            m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
-
-    def SBCAext(self, m: Module):
-        operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
-
-        with m.If(self.cycle == 3):
-            m.d.comb += self.src8_1.eq(self.a)
-            m.d.comb += self.alu8_func.eq(ALU8Func.SBC)
-            m.d.ph1 += self.a.eq(self.alu8)
             self.end_instr(m, self.pc)
 
     def mode_ext(self, m: Module) -> Statement:
         """Generates logic to get the 16-bit operand for extended mode instructions.
 
-        Returns a Statement valid for cycle 2 only, containing the
-        16-bit operand. After cycle 2, tmp16 contains the operand.
+        Returns a Statement containing the 16-bit operand. After cycle 2, tmp16 
+        contains the operand.
         """
-        operand = Cat(self.Din, self.tmp16[8:])
+        operand = Mux(self.cycle == 2, Cat(
+            self.Din, self.tmp16[8:]), self.tmp16)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.tmp16[8:].eq(self.Din)
@@ -404,8 +409,10 @@ if __name__ == "__main__":
         # m.d.comb += Assume(rst == (cycle2 < 8))
 
         with m.If(cycle2 == 20):
-            m.d.ph1 += Cover(core.formalData.snapshot_taken)
-            m.d.ph1 += Assume(core.formalData.snapshot_taken)
+            m.d.ph1 += Cover(core.formalData.snapshot_taken &
+                             core.end_instr_flag)
+            m.d.ph1 += Assume(core.formalData.snapshot_taken &
+                              core.end_instr_flag)
 
         # Verify reset does what it's supposed to
         with m.If(Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst)):
