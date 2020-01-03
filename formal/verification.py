@@ -136,7 +136,7 @@ class FormalData(object):
         if self.verification is None:
             return
         with m.If(self.snapshot_taken):
-            with m.If(self.addresses_read != 7):
+            with m.If(self.addresses_written != 7):
                 m.d.ph1 += self.addresses_written.eq(self.addresses_written +
                                                      1)
                 m.d.ph1 += self.write_addr[self.addresses_written].eq(addr)
