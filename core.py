@@ -296,6 +296,22 @@ class Core(Elaboratable):
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
+    def ALUdirect(self, m: Module, func: ALU8Func, store: bool = True):
+        operand = self.mode_direct(m)
+        self.read_byte(m, cycle=1, addr=operand, comb_dest=self.src8_2)
+
+        b = self.instr[6]
+
+        with m.If(self.cycle == 2):
+            m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+            m.d.comb += self.alu8_func.eq(func)
+            if store:
+                with m.If(b):
+                    m.d.ph1 += self.b.eq(self.alu8)
+                with m.Else():
+                    m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
     def ALUext(self, m: Module, func: ALU8Func, store: bool = True):
         operand = self.mode_ext(m)
         self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
@@ -343,6 +359,27 @@ class Core(Elaboratable):
             m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
             m.d.comb += self.alu8_func.eq(ALU8Func.LD)
             self.end_instr(m, self.pc)
+
+    def mode_direct(self, m: Module) -> Statement:
+        """Generates logic to get the 8-bit zero-page operand for direct mode instructions.
+
+        Returns a Statement containing a 16-bit operand where the upper byte is zero.
+        After cycle 1, tmp16 contains the operand.
+        """
+        operand = Mux(self.cycle == 1, Cat(
+            self.Din, self.tmp16[8:]), self.tmp16)
+
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.tmp16[8:].eq(0)
+            m.d.ph1 += self.tmp16[:8].eq(self.Din)
+            m.d.ph1 += self.pc.eq(self.pc + 1)
+            m.d.ph1 += self.Addr.eq(self.pc + 1)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.cycle.eq(2)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+
+        return operand
 
     def mode_ext(self, m: Module) -> Statement:
         """Generates logic to get the 16-bit operand for extended mode instructions.

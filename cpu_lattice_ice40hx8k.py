@@ -124,13 +124,14 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
     device = "iCE40HX8K"
     package = "CT256"
 
+    # Resets should be on GBIN0/2/4/6. Clocks may be on any GBIN.
     resources: List[Resource] = [
         Resource("clk1", 0, Pins("J3", dir="i"), Clock(12e6),
                  Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN6
         Resource("clk2", 0, Pins("G1", dir="i"), Clock(12e6),
                  Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN7
-        Resource("rst", 0, Pins("R9", dir="i"),
-                 Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN5
+        Resource("rst", 0, Pins("K9", dir="i"),
+                 Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN4
         *Bus(default_name="addr", pins="B1 B2 C1 C2 D1 D2 E2 F1 F2 G2 H1 H2 J2 J1 K3 K1",
              dir="o", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
         *Bus(default_name="data", pins="M3 L5 N3 P1 M4 P2 M5 R1",
