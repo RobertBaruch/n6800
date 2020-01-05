@@ -1,4 +1,4 @@
-# Copyright (C) 2019 Robert Baruch <robert.c.baruch@gmail.com>
+# Copyright (C) 2020 Robert Baruch <robert.c.baruch@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,37 +17,24 @@ from nmigen import Signal, Value, Cat, Module, Mux
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
 from .verification import FormalData, Verification
+from .alu_verification import AluVerification
 
 
-class Formal(Verification):
+class Formal(AluVerification):
     def __init__(self):
         pass
 
     def valid(self, instr: Value) -> Value:
-        return instr.matches("1-110110")
+        return instr.matches("1---0110")
 
     def check(self, m: Module, instr: Value, data: FormalData):
-        b = instr[6]
-        output = Mux(b, data.post_b, data.post_a)
+        _, input2, actual_output = self.common_check(m, instr, data)
+        output = input2
 
-        with m.If(b):
-            m.d.comb += Assert(data.post_a == data.pre_a)
-        with m.Else():
-            m.d.comb += Assert(data.post_b == data.pre_b)
+        z = output == 0
+        n = output[7]
+        v = 0
 
-        m.d.comb += [
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_written == 0),
-        ]
-        m.d.comb += [
-            Assert(data.post_pc == data.plus16(data.pre_pc, 3)),
-            Assert(data.addresses_read == 3),
-            Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-            Assert(data.read_addr[1] == data.plus16(data.pre_pc, 2)),
-            Assert(
-                data.read_addr[2] == Cat(data.read_data[1], data.read_data[0])),
-            Assert(output == data.read_data[2]),
-        ]
+        m.d.comb += Assert(actual_output == output),
         self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=(output == 0), N=output[7], V=0)
+                         Z=z, N=n, V=v)

@@ -27,8 +27,8 @@ multiclock off
 smtbmc boolector
 
 [script]
-read_ilang core.il
+read_ilang rel_file.il
 prep -top top
 
 [files]
-core.il
+abs_file.il

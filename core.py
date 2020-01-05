@@ -1,5 +1,5 @@
 # core.py: Core code for the 6800 CPU
-# Copyright (C) 2019 Robert Baruch <robert.c.baruch@gmail.com>
+# Copyright (C) 2020 Robert Baruch <robert.c.baruch@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@ from typing import List, Dict, Tuple, Optional
 
 from formal.verification import FormalData, Verification
 from alu8 import ALU8Func, ALU8
+from consts.consts import ModeBits
 
 from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux
 from nmigen import ClockDomain, ClockSignal
@@ -134,6 +135,7 @@ class Core(Elaboratable):
         # internal state
         self.reset_state = Signal(2)  # where we are during reset
         self.cycle = Signal(4)        # where we are during instr processing
+        self.mode = Signal(2)         # mode bits, decoded by ModeBits
 
         self.end_instr_flag = Signal()    # performs end-of-instruction actions
         self.end_instr_addr = Signal(16)  # where the next instruction is
@@ -155,6 +157,10 @@ class Core(Elaboratable):
         m.d.comb += self.src8_2_select.eq(Reg8.NONE)
         m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
         m.d.ph1 += self.VMA.eq(1)
+        m.d.ph1 += self.cycle.eq(self.cycle + 1)
+
+        # some common instruction decoding
+        m.d.comb += self.mode.eq(self.instr[4:6])
 
         self.src_bus_setup(m, self.reg8_map, self.src8_1, self.src8_1_select)
         self.src_bus_setup(m, self.reg8_map, self.src8_2, self.src8_2_select)
@@ -221,7 +227,6 @@ class Core(Elaboratable):
         The opcode is on the data lines by the end of the cycle.
         We always increment PC and Addr and go to instruction cycle 1."""
         m.d.ph1 += self.instr.eq(self.Din)
-        m.d.ph1 += self.cycle.eq(1)
         m.d.ph1 += self.RW.eq(1)
         m.d.ph1 += self.pc.eq(self.pc + 1)
         m.d.ph1 += self.Addr.eq(self.pc + 1)
@@ -255,30 +260,30 @@ class Core(Elaboratable):
         with m.Switch(self.instr):
             with m.Case("00000001"):  # NOP
                 self.NOP(m)
-            with m.Case("01111110"):  # JMP ext
-                self.JMPext(m)
-            with m.Case("1-110110"):  # LDA ext
-                self.ALUext(m, ALU8Func.LD)
-            with m.Case("1-110000"):  # SUB ext
-                self.ALUext(m, ALU8Func.SUB)
-            with m.Case("1-110001"):  # CMP ext
-                self.ALUext(m, ALU8Func.SUB, store=False)
-            with m.Case("1-110010"):  # SBC ext
-                self.ALUext(m, ALU8Func.SBC)
-            with m.Case("1-110100"):  # AND ext
-                self.ALUext(m, ALU8Func.AND)
-            with m.Case("1-110101"):  # BIT ext
-                self.ALUext(m, ALU8Func.AND, store=False)
-            with m.Case("1-110111"):  # STA ext
-                self.STAext(m)
-            with m.Case("1-111000"):  # EOR ext
-                self.ALUext(m, ALU8Func.EOR)
-            with m.Case("1-111001"):  # ADC ext
-                self.ALUext(m, ALU8Func.ADC)
-            with m.Case("1-111010"):  # ORA ext
-                self.ALUext(m, ALU8Func.ORA)
-            with m.Case("1-111011"):  # ADD ext
-                self.ALUext(m, ALU8Func.ADD)
+            with m.Case("011-1110"):  # JMP
+                self.JMP(m)
+            with m.Case("1---0110"):  # LDA
+                self.ALU(m, ALU8Func.LD)
+            with m.Case("1---0000"):  # SUB
+                self.ALU(m, ALU8Func.SUB)
+            with m.Case("1---0001"):  # CMP
+                self.ALU(m, ALU8Func.SUB, store=False)
+            with m.Case("1---0010"):  # SBC
+                self.ALU(m, ALU8Func.SBC)
+            with m.Case("1---0100"):  # AND
+                self.ALU(m, ALU8Func.AND)
+            with m.Case("1---0101"):  # BIT
+                self.ALU(m, ALU8Func.AND, store=False)
+            with m.Case("1--10111", "1-100111"):  # STA
+                self.STA(m)
+            with m.Case("1---1000"):  # EOR
+                self.ALU(m, ALU8Func.EOR)
+            with m.Case("1---1001"):  # ADC
+                self.ALU(m, ALU8Func.ADC)
+            with m.Case("1---1010"):  # ORA
+                self.ALU(m, ALU8Func.ORA)
+            with m.Case("1---1011"):  # ADD
+                self.ALU(m, ALU8Func.ADD)
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
 
@@ -296,78 +301,169 @@ class Core(Elaboratable):
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
-    def ALUdirect(self, m: Module, func: ALU8Func, store: bool = True):
-        operand = self.mode_direct(m)
-        self.read_byte(m, cycle=1, addr=operand, comb_dest=self.src8_2)
-
+    def ALU(self, m: Module, func: ALU8Func, store: bool = True):
         b = self.instr[6]
 
-        with m.If(self.cycle == 2):
-            m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
-            m.d.comb += self.alu8_func.eq(func)
-            if store:
-                with m.If(b):
-                    m.d.ph1 += self.b.eq(self.alu8)
-                with m.Else():
-                    m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
+        with m.If(self.mode == ModeBits.DIRECT.value):
+            operand = self.mode_direct(m)
+            self.read_byte(m, cycle=1, addr=operand, comb_dest=self.src8_2)
 
-    def ALUext(self, m: Module, func: ALU8Func, store: bool = True):
-        operand = self.mode_ext(m)
-        self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+            with m.If(self.cycle == 2):
+                m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(func)
+                if store:
+                    with m.If(b):
+                        m.d.ph1 += self.b.eq(self.alu8)
+                    with m.Else():
+                        m.d.ph1 += self.a.eq(self.alu8)
+                self.end_instr(m, self.pc)
 
-        b = self.instr[6]
+        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+            self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
 
-        with m.If(self.cycle == 3):
-            m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
-            m.d.comb += self.alu8_func.eq(func)
-            if store:
-                with m.If(b):
-                    m.d.ph1 += self.b.eq(self.alu8)
-                with m.Else():
-                    m.d.ph1 += self.a.eq(self.alu8)
-            self.end_instr(m, self.pc)
+            with m.If(self.cycle == 3):
+                m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(func)
+                if store:
+                    with m.If(b):
+                        m.d.ph1 += self.b.eq(self.alu8)
+                    with m.Else():
+                        m.d.ph1 += self.a.eq(self.alu8)
+                self.end_instr(m, self.pc)
 
-    def JMPext(self, m: Module):
-        operand = self.mode_ext(m)
+        with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
+            operand = self.mode_immediate8(m)
 
-        with m.If(self.cycle == 2):
-            self.end_instr(m, operand)
+            with m.If(self.cycle == 2):
+                m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.src8_2.eq(operand)
+                m.d.comb += self.alu8_func.eq(func)
+                if store:
+                    with m.If(b):
+                        m.d.ph1 += self.b.eq(self.alu8)
+                    with m.Else():
+                        m.d.ph1 += self.a.eq(self.alu8)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            operand = self.mode_indexed(m)
+            self.read_byte(m, cycle=3, addr=operand, comb_dest=self.src8_2)
+
+            with m.If(self.cycle == 4):
+                m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(func)
+                if store:
+                    with m.If(b):
+                        m.d.ph1 += self.b.eq(self.alu8)
+                    with m.Else():
+                        m.d.ph1 += self.a.eq(self.alu8)
+                self.end_instr(m, self.pc)
+
+    def JMP(self, m: Module):
+        with m.If(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+
+            with m.If(self.cycle == 2):
+                self.end_instr(m, operand)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            operand = self.mode_indexed(m)
+
+            with m.If(self.cycle == 3):
+                self.end_instr(m, operand)
 
     def NOP(self, m: Module):
         self.end_instr(m, self.pc)
 
-    def STAext(self, m: Module):
-        operand = self.mode_ext(m)
-
+    def STA(self, m: Module):
         b = self.instr[6]
 
-        with m.If(self.cycle == 2):
-            m.d.ph1 += self.VMA.eq(0)
-            m.d.ph1 += self.Addr.eq(operand)
+        with m.If(self.mode == ModeBits.DIRECT.value):
+            operand = self.mode_direct(m)
+
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.Dout.eq(Mux(b, self.b, self.a))
+                m.d.ph1 += self.RW.eq(0)
+
+            with m.If(self.cycle == 3):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.Dout.eq(Mux(b, self.b, self.a))
+                m.d.ph1 += self.RW.eq(0)
+
+            with m.If(self.cycle == 4):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            operand = self.mode_indexed(m)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.Dout.eq(Mux(b, self.b, self.a))
+                m.d.ph1 += self.RW.eq(0)
+
+            with m.If(self.cycle == 5):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                self.end_instr(m, self.pc)
+
+    def mode_immediate8(self, m: Module) -> Statement:
+        """Generates logic to get the 8-bit operand for immediate mode instructions.
+
+        Returns a Statement containing an 8-bit operand.
+        After cycle 1, tmp8 contains the operand.
+        """
+        operand = Mux(self.cycle == 1, self.Din, self.tmp8)
+
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.pc.eq(self.pc + 1)
+            m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-
-        with m.If(self.cycle == 3):
-            m.d.ph1 += self.Addr.eq(operand)
-            m.d.ph1 += self.Dout.eq(Mux(b, self.b, self.a))
-            m.d.ph1 += self.RW.eq(0)
-            m.d.ph1 += self.cycle.eq(4)
-
-        with m.If(self.cycle == 4):
             if self.verification is not None:
-                self.formalData.write(m, self.Addr, self.Dout)
-            m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
-            m.d.comb += self.alu8_func.eq(ALU8Func.LD)
-            self.end_instr(m, self.pc)
+                self.formalData.read(m, self.Addr, self.Din)
+
+        return operand
 
     def mode_direct(self, m: Module) -> Statement:
-        """Generates logic to get the 8-bit zero-page operand for direct mode instructions.
+        """Generates logic to get the 8-bit zero-page address for direct mode instructions.
 
-        Returns a Statement containing a 16-bit operand where the upper byte is zero.
-        After cycle 1, tmp16 contains the operand.
+        Returns a Statement containing a 16-bit address where the upper byte is zero.
+        After cycle 1, tmp16 contains the address.
         """
-        operand = Mux(self.cycle == 1, Cat(
-            self.Din, self.tmp16[8:]), self.tmp16)
+        operand = Mux(self.cycle == 1, self.Din, self.tmp16)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.tmp16[8:].eq(0)
@@ -375,17 +471,39 @@ class Core(Elaboratable):
             m.d.ph1 += self.pc.eq(self.pc + 1)
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-            m.d.ph1 += self.cycle.eq(2)
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
         return operand
 
-    def mode_ext(self, m: Module) -> Statement:
-        """Generates logic to get the 16-bit operand for extended mode instructions.
+    def mode_indexed(self, m: Module) -> Statement:
+        """Generates logic to get the 16-bit address for indexed mode instructions.
 
-        Returns a Statement containing the 16-bit operand. After cycle 2, tmp16 
-        contains the operand.
+        Returns a Statement containing a 16-bit address.
+        After cycle 2, tmp16 contains the address. The address is not valid until after
+        cycle 2.
+        """
+        operand = self.tmp16
+
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.tmp16[8:].eq(0)
+            m.d.ph1 += self.tmp16[:8].eq(self.Din)
+            m.d.ph1 += self.pc.eq(self.pc + 1)
+            m.d.ph1 += self.Addr.eq(self.pc + 1)
+            m.d.ph1 += self.RW.eq(1)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.tmp16.eq(self.tmp16 + self.x)
+
+        return operand
+
+    def mode_ext(self, m: Module) -> Statement:
+        """Generates logic to get the 16-bit address for extended mode instructions.
+
+        Returns a Statement containing the 16-bit address. After cycle 2, tmp16 
+        contains the address.
         """
         operand = Mux(self.cycle == 2, Cat(
             self.Din, self.tmp16[8:]), self.tmp16)
@@ -395,14 +513,12 @@ class Core(Elaboratable):
             m.d.ph1 += self.pc.eq(self.pc + 1)
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-            m.d.ph1 += self.cycle.eq(2)
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.tmp16[:8].eq(self.Din)
             m.d.ph1 += self.pc.eq(self.pc + 1)
-            m.d.ph1 += self.cycle.eq(3)
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 

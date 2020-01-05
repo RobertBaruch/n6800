@@ -115,7 +115,13 @@ class FormalData(object):
 
         self.addresses_read = Signal(3)
         self.read_addr = Array([Signal(16) for _ in range(8)])
+        for i in range(8):
+            self.read_addr[i].attrs["keep"] = True
+            self.read_addr[i].name = f"read_addr{i}"
         self.read_data = Array([Signal(8) for _ in range(8)])
+        for i in range(8):
+            self.read_data[i].attrs["keep"] = True
+            self.read_data[i].name = f"read_data{i}"
 
     def plus16(self, v1: Value, v2: Value) -> Value:
         return (v1 + v2)[:16]

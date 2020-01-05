@@ -13,22 +13,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-[tasks]
-cover
-bmc
+from enum import IntEnum
 
-[options]
-cover: mode cover
-bmc: mode bmc
-depth 24
-multiclock off
 
-[engines]
-smtbmc boolector
+class ModeBits(IntEnum):
+    """Decoding of bits 4 and 5 for instructions >= 0x80."""
+    IMMEDIATE = 0
+    DIRECT = 1
+    INDEXED = 2
+    EXTENDED = 3
 
-[script]
-read_ilang core.il
-prep -top top
 
-[files]
-core.il
+class Flags(IntEnum):
+    """Flag positions."""
+    H = 5
+    I = 4
+    N = 3
+    Z = 2
+    V = 1
+    C = 0

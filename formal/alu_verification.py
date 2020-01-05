@@ -13,72 +13,78 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from nmigen import Signal, Value, Cat, Module, Mux
+from typing import Tuple
+
+from nmigen import Signal, Value, Cat, Module, Mux, Const, unsigned
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
 from .verification import FormalData, Verification
 from consts.consts import ModeBits
 
 
-class Formal(Verification):
+class AluVerification(Verification):
     def __init__(self):
         pass
 
-    def valid(self, instr: Value) -> Value:
-        return instr.matches("1--10111", "1-100111")
+    def common_check(self, m: Module, instr: Value, data: FormalData) -> Tuple[Value, Value, Value]:
+        """Does common checks for ALU instructions.
 
-    def check(self, m: Module, instr: Value, data: FormalData):
+        Returns a tuple of values: (input1, input2, actual_output). The caller should use those
+        values to verify flags and expected output.
+        """
         mode = instr[4:6]
         b = instr[6]
-        input = Mux(b, data.pre_b, data.pre_a)
+        input1 = Mux(b, data.pre_b, data.pre_a)
+        input2 = Signal(8)
+        actual_output = Mux(b, data.post_b, data.post_a)
+
+        with m.If(b):
+            m.d.comb += Assert(data.post_a == data.pre_a)
+        with m.Else():
+            m.d.comb += Assert(data.post_b == data.pre_b)
 
         m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
             Assert(data.post_x == data.pre_x),
             Assert(data.post_sp == data.pre_sp),
+            Assert(data.addresses_written == 0),
         ]
 
         with m.If(mode == ModeBits.DIRECT.value):
             m.d.comb += [
                 Assert(data.post_pc == data.plus16(data.pre_pc, 2)),
-
-                Assert(data.addresses_read == 1),
+                Assert(data.addresses_read == 2),
                 Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-
-                Assert(data.addresses_written == 1),
-                Assert(data.write_addr[0] == data.read_data[0]),
-
-                Assert(data.write_data[0] == input),
+                Assert(data.read_addr[1] == data.read_data[0]),
+                input2.eq(data.read_data[1]),
             ]
+
         with m.Elif(mode == ModeBits.EXTENDED.value):
             m.d.comb += [
                 Assert(data.post_pc == data.plus16(data.pre_pc, 3)),
-
-                Assert(data.addresses_read == 2),
+                Assert(data.addresses_read == 3),
                 Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
                 Assert(data.read_addr[1] == data.plus16(data.pre_pc, 2)),
-
-                Assert(data.addresses_written == 1),
                 Assert(
-                    data.write_addr[0] == Cat(data.read_data[1], data.read_data[0])),
+                    data.read_addr[2] == Cat(data.read_data[1], data.read_data[0])),
+                input2.eq(data.read_data[2]),
+            ]
 
-                Assert(data.write_data[0] == input),
+        with m.Elif(mode == ModeBits.IMMEDIATE.value):
+            m.d.comb += [
+                Assert(data.post_pc == data.plus16(data.pre_pc, 2)),
+                Assert(data.addresses_read == 1),
+                Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
+                input2.eq(data.read_data[0]),
             ]
 
         with m.Elif(mode == ModeBits.INDEXED.value):
             m.d.comb += [
                 Assert(data.post_pc == data.plus16(data.pre_pc, 2)),
-
-                Assert(data.addresses_read == 1),
+                Assert(data.addresses_read == 2),
                 Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-
-                Assert(data.addresses_written == 1),
-                Assert(
-                    data.write_addr[0] == (data.pre_x + data.read_data[0])[:16]),
-
-                Assert(data.write_data[0] == input),
+                Assert(data.read_addr[1] == (
+                    data.pre_x + data.read_data[0])[:16]),
+                input2.eq(data.read_data[1]),
             ]
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=(input == 0), N=input[7], V=0)
+        return (input1, input2, actual_output)
