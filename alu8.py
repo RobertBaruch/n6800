@@ -38,6 +38,16 @@ class ALU8Func(IntEnum):
     # CMP is the same as SUB, just don't store the output.
     EOR = 7
     ORA = 8
+    CLV = 9
+    SEV = 10
+    CLC = 11
+    SEC = 12
+    TAP = 13
+    TPA = 14
+    CLI = 15
+    SEI = 16
+    CLZ = 17
+    SEZ = 18
 
 
 class ALU8(Elaboratable):
@@ -121,6 +131,36 @@ class ALU8(Elaboratable):
                 m.d.comb += self._ccs[Flags.Z].eq(self.output == 0)
                 m.d.comb += self._ccs[Flags.N].eq(self.output[7])
                 m.d.comb += self._ccs[Flags.V].eq(0)
+
+            with m.Case(ALU8Func.CLC):
+                m.d.comb += self._ccs[Flags.C].eq(0)
+
+            with m.Case(ALU8Func.SEC):
+                m.d.comb += self._ccs[Flags.C].eq(1)
+
+            with m.Case(ALU8Func.CLV):
+                m.d.comb += self._ccs[Flags.V].eq(0)
+
+            with m.Case(ALU8Func.SEV):
+                m.d.comb += self._ccs[Flags.V].eq(1)
+
+            with m.Case(ALU8Func.CLI):
+                m.d.comb += self._ccs[Flags.I].eq(0)
+
+            with m.Case(ALU8Func.SEI):
+                m.d.comb += self._ccs[Flags.I].eq(1)
+
+            with m.Case(ALU8Func.CLZ):
+                m.d.comb += self._ccs[Flags.Z].eq(0)
+
+            with m.Case(ALU8Func.SEZ):
+                m.d.comb += self._ccs[Flags.Z].eq(1)
+
+            with m.Case(ALU8Func.TAP):
+                m.d.comb += self._ccs.eq(self.input1 | 0b11000000)
+
+            with m.Case(ALU8Func.TPA):
+                m.d.comb += self.output.eq(self.ccs | 0b11000000)
 
         return m
 

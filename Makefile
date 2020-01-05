@@ -35,17 +35,16 @@ formal_targets := $(patsubst formal/%.py, %, $(wildcard formal/formal_*.py))
 
 formal: $(formal_targets)
 
-formal_%: formal/sby/%_bmc/status
+formal_%: formal/sby/%_bmc/PASS
 	$(info $(shell date '+%d %b %Y %H:%M:%S') Verified instruction '$*')
 
 # Don't delete the status file if the user hits ctrl-C.
-.PRECIOUS: formal/sby/%_bmc/status
+# .PRECIOUS: formal/sby/%_bmc/status
 
-formal/sby/%_bmc/status: formal/sby/%.sby
+formal/sby/%_bmc/PASS: formal/sby/%.sby
 	$(info $(shell date '+%d %b %Y %H:%M:%S') Running formal verification on instruction '$*'...)
 	sby -f $< 2>&1 >/dev/null; if [ $$? -ne 0 ]; then \
 		echo `date '+%d %b %Y %H:%M:%S'` Formal verification FAILED for instruction \'$*\'; \
-		rm $@; \
 	fi
 
 formal/sby/%.sby: formal/sby/%.il formal/formal.sby

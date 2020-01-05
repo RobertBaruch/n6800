@@ -28,9 +28,9 @@ from typing import List, Dict, Tuple, Optional
 
 from formal.verification import FormalData, Verification
 from alu8 import ALU8Func, ALU8
-from consts.consts import ModeBits
+from consts.consts import ModeBits, Flags
 
-from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux
+from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux, signed
 from nmigen import ClockDomain, ClockSignal
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert, Past, Cover, Assume
@@ -260,6 +260,20 @@ class Core(Elaboratable):
         with m.Switch(self.instr):
             with m.Case("00000001"):  # NOP
                 self.NOP(m)
+            with m.Case("00000110"):  # TAP
+                self.TAP(m)
+            with m.Case("00000111"):  # TPA
+                self.TPA(m)
+            with m.Case("0000100-"):  # INX/DEX
+                self.IN_DE_X(m)
+            with m.Case("0000101-"):  # CLV, SEV
+                self.CL_SE_V(m)
+            with m.Case("0000110-"):  # CLC, SEC
+                self.CL_SE_C(m)
+            with m.Case("0000111-"):  # CLI, SEI
+                self.CL_SE_I(m)
+            with m.Case("0010----"):  # Branch instructions
+                self.BR(m)
             with m.Case("011-1110"):  # JMP
                 self.JMP(m)
             with m.Case("1---0110"):  # LDA
@@ -360,6 +374,60 @@ class Core(Elaboratable):
                         m.d.ph1 += self.a.eq(self.alu8)
                 self.end_instr(m, self.pc)
 
+    def BR(self, m: Module):
+        operand = self.mode_immediate8(m)
+
+        relative = Signal(signed(8))
+        m.d.comb += relative.eq(operand)
+
+        # At this point, pc is the instruction start + 2, so we just
+        # add the signed relative offset to get the target.
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.tmp16.eq(self.pc + relative)
+
+        with m.If(self.cycle == 3):
+            take_branch = self.branch_check(m)
+            self.end_instr(m, Mux(take_branch, self.tmp16, self.pc))
+
+    def CL_SE_C(self, m: Module):
+        """Clears or sets Carry."""
+        with m.If(self.cycle == 1):
+            m.d.comb += self.alu8_func.eq(
+                Mux(self.instr[0], ALU8Func.SEC, ALU8Func.CLC))
+            self.end_instr(m, self.pc)
+
+    def CL_SE_V(self, m: Module):
+        """Clears or sets Overflow."""
+        with m.If(self.cycle == 1):
+            m.d.comb += self.alu8_func.eq(
+                Mux(self.instr[0], ALU8Func.SEV, ALU8Func.CLV))
+            self.end_instr(m, self.pc)
+
+    def CL_SE_I(self, m: Module):
+        """Clears or sets Interrupt."""
+        with m.If(self.cycle == 1):
+            m.d.comb += self.alu8_func.eq(
+                Mux(self.instr[0], ALU8Func.SEI, ALU8Func.CLI))
+            self.end_instr(m, self.pc)
+
+    def IN_DE_X(self, m: Module):
+        """Increments or decrements X."""
+        dec = self.instr[0]
+
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(self.x)
+            m.d.ph1 += self.x.eq(Mux(dec, self.x - 1, self.x + 1))
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(self.x)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.alu8_func.eq(
+                Mux(self.x == 0, ALU8Func.SEZ, ALU8Func.CLZ))
+            self.end_instr(m, self.pc)
+
     def JMP(self, m: Module):
         with m.If(self.mode == ModeBits.EXTENDED.value):
             operand = self.mode_ext(m)
@@ -438,6 +506,52 @@ class Core(Elaboratable):
                 m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 self.end_instr(m, self.pc)
+
+    def TAP(self, m: Module):
+        """Transfer A to CCS."""
+        with m.If(self.cycle == 1):
+            m.d.comb += self.alu8_func.eq(ALU8Func.TAP)
+            m.d.comb += self.src8_1.eq(self.a)
+            self.end_instr(m, self.pc)
+
+    def TPA(self, m: Module):
+        """Transfer CCS to A."""
+        with m.If(self.cycle == 1):
+            m.d.comb += self.alu8_func.eq(ALU8Func.TPA)
+            m.d.ph1 += self.a.eq(self.alu8)
+            self.end_instr(m, self.pc)
+
+    def branch_check(self, m: Module) -> Signal:
+        """Generates logic for a 1-bit value for branching.
+
+        Returns a 1-bit Signal which is set if the branch should be
+        taken. The branch logic is determined by the instruction.
+        """
+        invert = self.instr[0]
+        cond = Signal()
+        take_branch = Signal()
+
+        with m.Switch(self.instr[1:4]):
+            with m.Case("000"):  # BRA, BRN
+                m.d.comb += cond.eq(1)
+            with m.Case("001"):  # BHI, BLS
+                m.d.comb += cond.eq(~(self.ccs[Flags.C] | self.ccs[Flags.Z]))
+            with m.Case("010"):  # BCC, BCS
+                m.d.comb += cond.eq(~self.ccs[Flags.C])
+            with m.Case("011"):  # BNE, BEQ
+                m.d.comb += cond.eq(~self.ccs[Flags.Z])
+            with m.Case("100"):  # BVC, BVS
+                m.d.comb += cond.eq(~self.ccs[Flags.V])
+            with m.Case("101"):  # BPL, BMI
+                m.d.comb += cond.eq(~self.ccs[Flags.N])
+            with m.Case("110"):  # BGE, BLT
+                m.d.comb += cond.eq(~(self.ccs[Flags.N] ^ self.ccs[Flags.V]))
+            with m.Case("111"):  # BGT, BLE
+                m.d.comb += cond.eq(~(self.ccs[Flags.Z] |
+                                      (self.ccs[Flags.N] ^ self.ccs[Flags.V])))
+
+        m.d.comb += take_branch.eq(cond ^ invert)
+        return take_branch
 
     def mode_immediate8(self, m: Module) -> Statement:
         """Generates logic to get the 8-bit operand for immediate mode instructions.
@@ -582,9 +696,9 @@ if __name__ == "__main__":
         mem = {
             0xFFFE: 0x12,
             0xFFFF: 0x34,
-            0x1234: 0x7E,  # JMP 0xA010
-            0x1235: 0xA0,
-            0x1236: 0x10,
+            0x1234: 0x20,  # BRA 0x1234
+            0x1235: 0xFE,
+            0x1236: 0x01,  # NOP
             0xA010: 0x01,  # NOP
         }
         with m.Switch(core.Addr):
