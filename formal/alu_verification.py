@@ -88,3 +88,92 @@ class AluVerification(Verification):
             ]
 
         return (input1, input2, actual_output)
+
+
+class Alu2Verification(Verification):
+    def __init__(self):
+        pass
+
+    def common_check(self, m: Module, instr: Value, data: FormalData, store: bool = True) -> Tuple[Value, Value]:
+        """Does common checks for ALU instructions from 0x40 to 0x7F.
+
+        Returns a tuple of values: (input, actual_output). The caller should use those
+        values to verify flags and expected output.
+        """
+        mode = instr[4:6]
+        input = Signal(8)
+        actual_output = Signal(8)
+
+        m.d.comb += [
+            Assert(data.post_x == data.pre_x),
+            Assert(data.post_sp == data.pre_sp),
+        ]
+
+        with m.If(mode == ModeBits.A):
+            m.d.comb += [
+                Assert(data.post_b == data.pre_b),
+                Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+                Assert(data.addresses_read == 0),
+                Assert(data.addresses_written == 0),
+                input.eq(data.pre_a),
+            ]
+            if store:
+                m.d.comb += actual_output.eq(data.post_a)
+            else:
+                m.d.comb += Assert(data.post_a == data.pre_a)
+
+        with m.Elif(mode == ModeBits.B):
+            m.d.comb += [
+                Assert(data.post_a == data.pre_a),
+                Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+                Assert(data.addresses_read == 0),
+                Assert(data.addresses_written == 0),
+                input.eq(data.pre_b),
+            ]
+            if store:
+                m.d.comb += actual_output.eq(data.post_b)
+            else:
+                m.d.comb += Assert(data.post_b == data.pre_b)
+
+        with m.Elif(mode == ModeBits.EXTENDED.value):
+            m.d.comb += [
+                Assert(data.post_a == data.pre_a),
+                Assert(data.post_b == data.pre_b),
+                Assert(data.post_pc == data.plus16(data.pre_pc, 3)),
+                Assert(data.addresses_read == 3),
+                Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
+                Assert(data.read_addr[1] == data.plus16(data.pre_pc, 2)),
+                Assert(
+                    data.read_addr[2] == Cat(data.read_data[1], data.read_data[0])),
+                input.eq(data.read_data[2]),
+            ]
+            if store:
+                m.d.comb += [
+                    Assert(data.addresses_written == 1),
+                    Assert(data.write_addr[0] == data.read_addr[2]),
+                    actual_output.eq(data.write_data[0]),
+                ]
+            else:
+                m.d.comb += Assert(data.addresses_written == 0)
+
+        with m.Elif(mode == ModeBits.INDEXED.value):
+            m.d.comb += [
+                Assert(data.post_a == data.pre_a),
+                Assert(data.post_b == data.pre_b),
+                Assert(data.post_pc == data.plus16(data.pre_pc, 2)),
+                Assert(data.addresses_read == 2),
+                Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
+                Assert(data.read_addr[1] == (
+                    data.pre_x + data.read_data[0])[:16]),
+                input.eq(data.read_data[1]),
+            ]
+            if store:
+                m.d.comb += [
+                    Assert(data.addresses_written == 1),
+                    Assert(data.write_addr[0] == data.read_addr[1]),
+                    actual_output.eq(data.write_data[0]),
+                ]
+            else:
+                m.d.comb += Assert(data.addresses_written == 0)
+
+        return (input, actual_output)

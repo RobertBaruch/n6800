@@ -48,6 +48,23 @@ class ALU8Func(IntEnum):
     SEI = 16
     CLZ = 17
     SEZ = 18
+    COM = 19  # Not implemented using SUB or EOR
+    INC = 20  # Not implemented using ADD
+    DEC = 21  # Not implemented using SUB
+    ROL = 22
+    ROR = 23
+    ASL = 24
+    ASR = 25
+    LSR = 26
+
+
+def LCat(*args) -> Value:
+    """Left or logical concatenation.
+
+    Concatenates arguments such that the first argument is placed in the
+    highest bit positions, and the last is placed in the lowest bit positions.
+    """
+    return Cat(*args[::-1])
 
 
 class ALU8(Elaboratable):
@@ -131,6 +148,85 @@ class ALU8(Elaboratable):
                 m.d.comb += self._ccs[Flags.Z].eq(self.output == 0)
                 m.d.comb += self._ccs[Flags.N].eq(self.output[7])
                 m.d.comb += self._ccs[Flags.V].eq(0)
+
+            with m.Case(ALU8Func.INC):
+                m.d.comb += self.output.eq(self.input2 + 1)
+                m.d.comb += self._ccs[Flags.Z].eq(self.output == 0)
+                m.d.comb += self._ccs[Flags.N].eq(self.output[7])
+                m.d.comb += self._ccs[Flags.V].eq(self.output == 0x80)
+
+            with m.Case(ALU8Func.DEC):
+                m.d.comb += self.output.eq(self.input2 - 1)
+                m.d.comb += self._ccs[Flags.Z].eq(self.output == 0)
+                m.d.comb += self._ccs[Flags.N].eq(self.output[7])
+                m.d.comb += self._ccs[Flags.V].eq(self.output == 0x7F)
+
+            with m.Case(ALU8Func.COM):
+                m.d.comb += self.output.eq(0xFF ^ self.input2)
+                m.d.comb += self._ccs[Flags.Z].eq(self.output == 0)
+                m.d.comb += self._ccs[Flags.N].eq(self.output[7])
+                m.d.comb += self._ccs[Flags.V].eq(0)
+                m.d.comb += self._ccs[Flags.C].eq(1)
+
+            with m.Case(ALU8Func.ROL):
+                # IIIIIIIIC ->
+                # COOOOOOOO
+                m.d.comb += [
+                    LCat(self._ccs[Flags.C], self.output).eq(
+                        LCat(self.input2, self.ccs[Flags.C])),
+                    self._ccs[Flags.Z].eq(self.output == 0),
+                    self._ccs[Flags.N].eq(self.output[7]),
+                    self._ccs[Flags.V].eq(
+                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                ]
+
+            with m.Case(ALU8Func.ROR):
+                # CIIIIIIII ->
+                # OOOOOOOOC
+                m.d.comb += [
+                    LCat(self.output, self._ccs[Flags.C]).eq(
+                        LCat(self.ccs[Flags.C], self.input2)),
+                    self._ccs[Flags.Z].eq(self.output == 0),
+                    self._ccs[Flags.N].eq(self.output[7]),
+                    self._ccs[Flags.V].eq(
+                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                ]
+
+            with m.Case(ALU8Func.ASL):
+                # IIIIIIII0 ->
+                # COOOOOOOO
+                m.d.comb += [
+                    LCat(self._ccs[Flags.C], self.output).eq(
+                        LCat(self.input2, Const(0))),
+                    self._ccs[Flags.Z].eq(self.output == 0),
+                    self._ccs[Flags.N].eq(self.output[7]),
+                    self._ccs[Flags.V].eq(
+                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                ]
+
+            with m.Case(ALU8Func.ASR):
+                # 7IIIIIIII ->  ("7" is the repeat of input[7])
+                # OOOOOOOOC
+                m.d.comb += [
+                    LCat(self.output, self._ccs[Flags.C]).eq(
+                        LCat(self.input2[7], self.input2)),
+                    self._ccs[Flags.Z].eq(self.output == 0),
+                    self._ccs[Flags.N].eq(self.output[7]),
+                    self._ccs[Flags.V].eq(
+                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                ]
+
+            with m.Case(ALU8Func.LSR):
+                # 0IIIIIIII ->
+                # OOOOOOOOC
+                m.d.comb += [
+                    LCat(self.output, self._ccs[Flags.C]).eq(
+                        LCat(Const(0), self.input2)),
+                    self._ccs[Flags.Z].eq(self.output == 0),
+                    self._ccs[Flags.N].eq(self.output[7]),
+                    self._ccs[Flags.V].eq(
+                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                ]
 
             with m.Case(ALU8Func.CLC):
                 m.d.comb += self._ccs[Flags.C].eq(0)

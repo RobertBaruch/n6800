@@ -13,24 +13,24 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from enum import IntEnum
+from nmigen import Signal, Value, Cat, Module, Mux
+from nmigen.hdl.ast import Statement
+from nmigen.asserts import Assert
+from .verification import FormalData
+from .alu_verification import Alu2Verification
 
 
-class ModeBits(IntEnum):
-    """Decoding of bits 4 and 5 for instructions >= 0x80."""
-    IMMEDIATE = 0
-    A = 0  # An alias for instructions in 0x40-0x7F
-    DIRECT = 1
-    B = 1  # An alias for instructions in 0x40-0x7F
-    INDEXED = 2
-    EXTENDED = 3
+class Formal(Alu2Verification):
+    def __init__(self):
+        pass
 
+    def valid(self, instr: Value) -> Value:
+        return instr.matches("01--1111")
 
-class Flags(IntEnum):
-    """Flag positions."""
-    H = 5
-    I = 4
-    N = 3
-    Z = 2
-    V = 1
-    C = 0
+    def check(self, m: Module, instr: Value, data: FormalData):
+        input, actual_output = self.common_check(m, instr, data)
+        expected_output = 0
+
+        m.d.comb += Assert(expected_output == actual_output)
+        self.assertFlags(m, data.post_ccs, data.pre_ccs,
+                         Z=1, N=0, V=0, C=0)
