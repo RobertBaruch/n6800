@@ -272,8 +272,26 @@ class Core(Elaboratable):
                 self.CL_SE_C(m)
             with m.Case("0000111-"):  # CLI, SEI
                 self.CL_SE_I(m)
+            with m.Case("0001000-"):  # SBA, CBA
+                self.SBA_CBA(m)
+            with m.Case("0001001-"):  # TAB, TBA
+                self.TAB_TBA(m)
+            with m.Case("00011011"):  # ABA
+                self.ABA(m)
+            with m.Case("00011001"):  # DAA
+                self.DAA(m)
             with m.Case("0010----"):  # Branch instructions
                 self.BR(m)
+            with m.Case("00110000", "00110101"):  # TSX, TXS
+                self.TSX_TXS(m)
+            with m.Case("00110001", "00110100"):  # INS, DES
+                self.INS_DES(m)
+            with m.Case("0011001-"):  # PUL A, PUL B
+                self.PUL2(m)
+            with m.Case("0011011-"):  # PSH A, PSH B
+                self.PSH(m)
+            with m.Case("00111001"):  # RTS
+                self.RTS(m)
             with m.Case("01--0000"):  # NEG
                 self.ALU2(m, ALU8Func.SUB, 0, 1)
             with m.Case("01--0011"):  # COM
@@ -298,6 +316,14 @@ class Core(Elaboratable):
                 self.JMP(m)
             with m.Case("01--1111"):  # CLR
                 self.ALU2(m, ALU8Func.SUB, 1, 1)
+            with m.Case("10--1100"):  # CPX
+                self.CPX(m)
+            with m.Case("10001101"):  # BSR
+                self.BSR(m)
+            with m.Case("1---1110"):  # LDS, LDX
+                self.LDS_LDX(m)
+            with m.Case("1-011111", "1-1-1111"):  # STS, STX
+                self.STS_STX(m)
             with m.Case("1---0110"):  # LDA
                 self.ALU(m, ALU8Func.LD)
             with m.Case("1---0000"):  # SUB
@@ -320,16 +346,20 @@ class Core(Elaboratable):
                 self.ALU(m, ALU8Func.ORA)
             with m.Case("1---1011"):  # ADD
                 self.ALU(m, ALU8Func.ADD)
+            with m.Case("101-1101"):  # JSR
+                self.JSR(m)
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
 
-    def read_byte(self, m: Module, cycle: int, addr: Statement, comb_dest: Signal):
+    def read_byte(self, m: Module, cycle: int, addr: Statement, comb_dest: Signal = None, sync_dest: Signal = None):
         """Reads a byte starting from the given cycle.
 
-        The byte read is combinatorically placed in comb_dest. If, however, comb_dest
-        is None, then the byte read is in Din. In either case, that value is only
-        valid for the cycle after the given cycle. If you want it after that, you will
-        have to store it yourself.
+        The address lines are output with the address during cycle+1. At some point during
+        cycle+1, Din will contain the data in.
+
+        If comb_dest is not None, then comb_dest is also set to Din for cycle+1.
+
+        If sync_dest is not None, then Din is stored in sync_dest at the end of cycle+1.
         """
         with m.If(self.cycle == cycle):
             m.d.ph1 += self.Addr.eq(addr)
@@ -338,6 +368,8 @@ class Core(Elaboratable):
         with m.If(self.cycle == cycle + 1):
             if comb_dest is not None:
                 m.d.comb += comb_dest.eq(self.Din)
+            if sync_dest is not None:
+                m.d.ph1 += sync_dest.eq(self.Din)
             if self.verification is not None:
                 self.formalData.read(m, self.Addr, self.Din)
 
@@ -487,6 +519,538 @@ class Core(Elaboratable):
         with m.If(self.cycle == 3):
             take_branch = self.branch_check(m)
             self.end_instr(m, Mux(take_branch, self.tmp16, self.pc))
+
+    def SBA_CBA(self, m: Module):
+        m.d.comb += self.src8_1.eq(self.a)
+        m.d.comb += self.src8_2.eq(self.b)
+        m.d.comb += self.alu8_func.eq(ALU8Func.SUB)
+        with m.If(self.instr[0] == 0):
+            m.d.ph1 += self.a.eq(self.alu8)
+        self.end_instr(m, self.pc)
+
+    def TAB_TBA(self, m: Module):
+        with m.If(self.instr[0] == 0):  # TAB
+            m.d.comb += self.src8_2.eq(self.a)
+            m.d.ph1 += self.b.eq(self.a)
+        with m.Else():  # TBA
+            m.d.comb += self.src8_2.eq(self.b)
+            m.d.ph1 += self.a.eq(self.b)
+        m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+        self.end_instr(m, self.pc)
+
+    def ABA(self, m: Module):
+        m.d.comb += self.src8_1.eq(self.a)
+        m.d.comb += self.src8_2.eq(self.b)
+        m.d.comb += self.alu8_func.eq(ALU8Func.ADD)
+        m.d.ph1 += self.a.eq(self.alu8)
+        self.end_instr(m, self.pc)
+
+    def TSX_TXS(self, m: Module):
+        with m.If(self.cycle == 3):
+            with m.If(self.instr[0] == 0):  # TSX
+                m.d.ph1 += self.x.eq(self.sp)
+            with m.Else():  # TXS
+                m.d.ph1 += self.sp.eq(self.x)
+            self.end_instr(m, self.pc)
+
+    def INS_DES(self, m: Module):
+        with m.If(self.cycle == 3):
+            with m.If(self.instr[0] == 1):  # INS
+                m.d.ph1 += self.sp.eq(self.sp + 1)
+            with m.Else():  # DES
+                m.d.ph1 += self.sp.eq(self.sp - 1)
+            self.end_instr(m, self.pc)
+
+    def PUL(self, m: Module):
+        with m.If(self.instr[0] == 0):  # PUL A
+            self.read_byte(m, 2, self.sp + 1, sync_dest=self.a)
+        with m.Else():
+            self.read_byte(m, 2, self.sp + 1, sync_dest=self.b)
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.sp.eq(self.sp + 1)
+            self.end_instr(m, self.pc)
+
+    def PUL2(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(0)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(1)
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.sp.eq(self.Addr)
+            with m.If(self.instr[0] == 0):  # PUL A
+                m.d.ph1 += self.a.eq(self.Din)
+            with m.Else():
+                m.d.ph1 += self.b.eq(self.Din)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+            self.end_instr(m, self.pc)
+
+    def PSH(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.Dout.eq(Mux(self.instr[0] == 0, self.a, self.b))
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(0)
+            if self.verification is not None:
+                self.formalData.write(m, self.Addr, self.Dout)
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.sp.eq(self.Addr)
+            self.end_instr(m, self.pc)
+
+    def LDS_LDX(self, m: Module):
+        lds = self.instr[6] == 0
+
+        with m.If(self.mode == ModeBits.DIRECT.value):
+            _ = self.mode_direct(m)
+
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(self.Din)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(lds):
+                    m.d.ph1 += self.sp[8:].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[8:].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 3):
+                with m.If(lds):
+                    m.d.ph1 += self.sp[:8].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[:8].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(lds):
+                    m.d.ph1 += self.sp[8:].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[8:].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 4):
+                with m.If(lds):
+                    m.d.ph1 += self.sp[:8].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[:8].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(lds):
+                    m.d.ph1 += self.sp[8:].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[8:].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 2):
+                with m.If(lds):
+                    m.d.ph1 += self.sp[:8].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[:8].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.Addr + 1)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            _ = self.mode_indexed(m)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.tmp16)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(lds):
+                    m.d.ph1 += self.sp[8:].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[8:].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 5):
+                with m.If(lds):
+                    m.d.ph1 += self.sp[:8].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[:8].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+    def CPX(self, m: Module):
+        with m.If(self.mode == ModeBits.DIRECT.value):
+            _ = self.mode_direct(m)
+
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(self.Din)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
+                m.d.comb += self.src8_1.eq(self.x[8:])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 3):
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
+                m.d.comb += self.src8_1.eq(self.x[:8])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
+                m.d.comb += self.src8_1.eq(self.x[8:])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 4):
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
+                m.d.comb += self.src8_1.eq(self.x[:8])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
+                m.d.comb += self.src8_1.eq(self.x[8:])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 2):
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
+                m.d.comb += self.src8_1.eq(self.x[:8])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.Addr + 1)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            _ = self.mode_indexed(m)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.tmp16)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
+                m.d.comb += self.src8_1.eq(self.x[8:])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+
+            with m.If(self.cycle == 5):
+                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
+                m.d.comb += self.src8_1.eq(self.x[:8])
+                m.d.comb += self.src8_2.eq(self.Din)
+                if self.verification is not None:
+                    self.formalData.read(m, self.Addr, self.Din)
+                self.end_instr(m, self.pc)
+
+    def STS_STX(self, m: Module):
+        sts = self.instr[6] == 0
+
+        with m.If(self.mode == ModeBits.DIRECT.value):
+            _ = self.mode_direct(m)
+
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(self.Din)
+                m.d.ph1 += self.VMA.eq(0)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.RW.eq(0)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[8:])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[8:])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[:8])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[:8])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 4):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+            operand = self.mode_ext(m)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.VMA.eq(0)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.RW.eq(0)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[8:])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[8:])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[:8])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[:8])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 5):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                self.end_instr(m, self.pc)
+
+        with m.Elif(self.mode == ModeBits.INDEXED.value):
+            _ = self.mode_indexed(m)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.tmp16)
+                m.d.ph1 += self.VMA.eq(0)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.RW.eq(0)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[8:])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[8:])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+
+            with m.If(self.cycle == 5):
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(sts):
+                    m.d.comb += self.src8_2.eq(self.sp[:8])
+                with m.Else():
+                    m.d.comb += self.src8_2.eq(self.x[:8])
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.ph1 += self.Dout.eq(self.alu8)
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 6):
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+                self.end_instr(m, self.pc)
+
+    def RTS(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(0)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(1)
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(1)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+
+        with m.If(self.cycle == 4):
+            m.d.ph1 += self.sp.eq(self.Addr)
+            if self.verification is not None:
+                self.formalData.read(m, self.Addr, self.Din)
+            self.end_instr(m, Cat(self.Din, self.tmp8))
+
+    def BSR(self, m: Module):
+        operand = self.mode_immediate8(m)
+
+        relative = Signal(signed(8))
+        m.d.comb += relative.eq(operand)
+
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.VMA.eq(0)
+
+        # At this point, pc is the instruction start + 2, so we just
+        # add the signed relative offset to get the target.
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.tmp16.eq(self.pc + relative)
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[:8])
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[8:])
+            if self.verification is not None:
+                self.formalData.write(m, self.Addr, self.Dout)
+
+        with m.If(self.cycle == 4):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.RW.eq(1)
+            if self.verification is not None:
+                self.formalData.write(m, self.Addr, self.Dout)
+
+        with m.If(self.cycle == 5):
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.sp.eq(self.Addr)
+
+        with m.If(self.cycle == 6):
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(self.tmp16)
+
+        with m.If(self.cycle == 7):
+            self.end_instr(m, self.tmp16)
+
+    def JSR(self, m: Module):
+        with m.If(self.instr[4] == 1):  # extended
+            _ = self.mode_ext(m)  # output is in tmp16 on cycle 3
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.sp)
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.pc[:8])
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.pc[8:])
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 5):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.RW.eq(1)
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 6):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.sp.eq(self.Addr)
+
+            with m.If(self.cycle == 7):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.Addr.eq(self.tmp16)
+
+            with m.If(self.cycle == 8):
+                self.end_instr(m, self.tmp16)
+
+        with m.Else():  # indexed
+            _ = self.mode_indexed(m)  # output is in tmp16 on cycle 3
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(self.sp)
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.pc[:8])
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.pc[8:])
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 4):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.RW.eq(1)
+                if self.verification is not None:
+                    self.formalData.write(m, self.Addr, self.Dout)
+
+            with m.If(self.cycle == 5):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.sp.eq(self.Addr)
+
+            with m.If(self.cycle == 6):
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.Addr.eq(self.tmp16)
+
+            with m.If(self.cycle == 7):
+                self.end_instr(m, self.tmp16)
+
+    def DAA(self, m: Module):
+        m.d.comb += self.src8_1.eq(self.a)
+        m.d.comb += self.alu8_func.eq(ALU8Func.DAA)
+        m.d.ph1 += self.a.eq(self.alu8)
+        self.end_instr(m, self.pc)
 
     def CL_SE_C(self, m: Module):
         """Clears or sets Carry."""

@@ -29,6 +29,15 @@ _V = 1
 _C = 0
 
 
+def LCat(*args) -> Value:
+    """Left or logical concatenation.
+
+    Concatenates arguments such that the first argument is placed in the
+    highest bit positions, and the last is placed in the lowest bit positions.
+    """
+    return Cat(*args[::-1])
+
+
 class Verification(object):
     def __init__(self):
         pass

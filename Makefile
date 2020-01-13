@@ -53,3 +53,6 @@ formal/sby/%.sby: formal/sby/%.il formal/formal.sby
 
 formal/sby/%.il: formal/formal_%.py core.py
 	python3 core.py --insn $* generate -t il > $@
+
+formal/sby/alu8.il: alu8.py
+	python3 alu8.py generate -t il > $@

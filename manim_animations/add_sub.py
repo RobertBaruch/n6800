@@ -14,6 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from manimlib.imports import *
+from manimlib.imports import Scene
 
 # add_sub.py implements the storyboard storyboard_add_sub.pdf.
 # Inkscape file of storyboard is the svg file.
@@ -218,7 +219,8 @@ class Shapes(Scene):
         anims = []
         for s in self.sum:
             anims.append(Succession(
-                ApplyMethod(s.set_fill, YELLOW, {"opacity": 1}, run_time=0.1),
+                ApplyMethod(s.set_fill, COLOR_MAP["YELLOW_C"], {
+                            "opacity": 1}, run_time=0.1),
                 ApplyMethod(s.set_fill, BLACK, {"opacity": 1}, run_time=0.5)))
 
         anims = [ApplyMethod(self.scanner.move_to, self.sum[7].get_center(
