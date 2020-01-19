@@ -22,70 +22,67 @@ from consts.consts import ModeBits, Flags
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("1---1110")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        mode = instr[4:6]
-        use_sp = (instr[6] == 0)
-        output = Mux(use_sp, data.post_sp, data.post_x)
-        read_addr = Signal(16)
-
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-        ]
-
-        with m.If(use_sp):
-            m.d.comb += Assert(data.post_x == data.pre_x)
-        with m.Else():
-            m.d.comb += Assert(data.post_sp == data.pre_sp)
+    def check(self, m: Module):
+        mode = self.instr[4:6]
+        use_sp = (self.instr[6] == 0)
+        data = Signal(16)
+        size = Signal(4)
 
         with m.If(mode == ModeBits.DIRECT):
-            m.d.comb += [
-                Assert(data.addresses_read == 3),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-                read_addr.eq(data.read_data[0]),
-                Assert(data.read_addr[1] == read_addr),
-                Assert(data.read_addr[2] == (read_addr + 1)[:16]),
-                Assert(output == LCat(data.read_data[1], data.read_data[2])),
-                Assert(data.post_pc == (data.pre_pc + 2)[:16]),
-            ]
+            self.assert_cycles(m, 4)
+            addr_lo = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            data_hi = self.assert_cycle_signals(
+                m, 2, address=addr_lo, vma=1, rw=1, ba=0)
+            data_lo = self.assert_cycle_signals(
+                m, 3, address=addr_lo+1, vma=1, rw=1, ba=0)
+            m.d.comb += data.eq(LCat(data_hi, data_lo))
+            m.d.comb += size.eq(2)
 
         with m.Elif(mode == ModeBits.EXTENDED):
-            m.d.comb += [
-                Assert(data.addresses_read == 4),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-                Assert(data.read_addr[1] == (data.pre_pc + 2)[:16]),
-                read_addr.eq(LCat(data.read_data[0], data.read_data[1])),
-                Assert(data.read_addr[2] == read_addr),
-                Assert(data.read_addr[3] == (read_addr + 1)[:16]),
-                Assert(output == LCat(data.read_data[2], data.read_data[3])),
-                Assert(data.post_pc == (data.pre_pc + 3)[:16]),
-            ]
+            self.assert_cycles(m, 5)
+            addr_hi = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            addr_lo = self.assert_cycle_signals(
+                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+            data_hi = self.assert_cycle_signals(
+                m, 3, address=LCat(addr_hi, addr_lo), vma=1, rw=1, ba=0)
+            data_lo = self.assert_cycle_signals(
+                m, 4, address=LCat(addr_hi, addr_lo)+1, vma=1, rw=1, ba=0)
+            m.d.comb += data.eq(LCat(data_hi, data_lo))
+            m.d.comb += size.eq(3)
 
         with m.Elif(mode == ModeBits.IMMEDIATE):
-            m.d.comb += [
-                Assert(data.addresses_read == 2),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-                Assert(data.read_addr[1] == (data.pre_pc + 2)[:16]),
-                Assert(output == LCat(data.read_data[0], data.read_data[1])),
-                Assert(data.post_pc == (data.pre_pc + 3)[:16]),
-            ]
+            self.assert_cycles(m, 3)
+            data_hi = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            data_lo = self.assert_cycle_signals(
+                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+            m.d.comb += data.eq(LCat(data_hi, data_lo))
+            m.d.comb += size.eq(3)
 
         with m.Else():
-            m.d.comb += [
-                Assert(data.addresses_read == 3),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-                read_addr.eq((data.pre_x + data.read_data[0])[:16]),
-                Assert(data.read_addr[1] == read_addr),
-                Assert(data.read_addr[2] == (read_addr + 1)[:16]),
-                Assert(output == LCat(data.read_data[1], data.read_data[2])),
-                Assert(data.post_pc == (data.pre_pc + 2)[:16]),
-            ]
+            self.assert_cycles(m, 6)
+            offset = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            self.assert_cycle_signals(m, 2, vma=0, ba=0)
+            self.assert_cycle_signals(m, 3, vma=0, ba=0)
+            data_hi = self.assert_cycle_signals(
+                m, 4, address=self.data.pre_x+offset, vma=1, rw=1, ba=0)
+            data_lo = self.assert_cycle_signals(
+                m, 5, address=self.data.pre_x+offset+1, vma=1, rw=1, ba=0)
+            m.d.comb += data.eq(LCat(data_hi, data_lo))
+            m.d.comb += size.eq(2)
 
-        z = (output == 0)
-        n = output[15]
-        self.assertFlags(m, data.post_ccs, data.pre_ccs, V=0, Z=z, N=n)
+        z = (data == 0)
+        n = data[15]
+        with m.If(use_sp):
+            self.assert_registers(m, SP=data, PC=self.data.pre_pc+size)
+        with m.Else():
+            self.assert_registers(m, X=data, PC=self.data.pre_pc+size)
+        self.assert_flags(m, V=0, Z=z, N=n)

@@ -68,6 +68,7 @@ class ALU8Func(IntEnum):
     # been passed through CPXHI, so N, V, and Z have been evaluated.
     # Z should be anded with whether the subtraction is zero.
     CPXLO = 30
+    SEF = 31  # Set all flags
 
 
 def LCat(*args) -> Value:
@@ -281,6 +282,9 @@ class ALU8(Elaboratable):
 
             with m.Case(ALU8Func.TPA):
                 m.d.comb += self.output.eq(self.ccs | 0b11000000)
+
+            with m.Case(ALU8Func.SEF):
+                m.d.comb += self._ccs.eq(self.input1 | 0b11000000)
 
             with m.Case(ALU8Func.DAA):
                 adjust = Signal(8)

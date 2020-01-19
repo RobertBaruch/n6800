@@ -13,30 +13,32 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from nmigen import Signal, Value, Cat, Module, Mux, Const, unsigned
+from nmigen import Signal, Value, Cat, Module, Mux
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
 from .verification import FormalData, Verification
-from .alu_verification import AluVerification
+
+INX = "00001000"
+DEX = "00001001"
 
 
-class Formal(AluVerification):
+class Formal(Verification):
     def __init__(self):
         super().__init__()
 
     def valid(self, instr: Value) -> Value:
-        return instr.matches("1---1010")
+        return instr.matches(INX, DEX)
 
     def check(self, m: Module):
-        input1, input2, actual_output, size, use_a = self.common_check(m)
-        output = input1 | input2
+        self.assert_cycles(m, 4)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
-        z = output == 0
-        n = output[7]
-        v = 0
-
-        with m.If(use_a):
-            self.assert_registers(m, A=output, PC=self.data.pre_pc+size)
+        with m.If(self.instr.matches(INX)):
+            self.assert_registers(m, X=self.data.pre_x +
+                                  1, PC=self.data.pre_pc+1)
         with m.Else():
-            self.assert_registers(m, B=output, PC=self.data.pre_pc+size)
-        self.assert_flags(m, Z=z, N=n, V=v)
+            self.assert_registers(m, X=self.data.pre_x -
+                                  1, PC=self.data.pre_pc+1)
+
+        self.assert_flags(m, Z=(self.data.post_x == 0))

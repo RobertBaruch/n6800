@@ -21,23 +21,14 @@ from .verification import FormalData, Verification
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("00011011")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input1 = data.pre_a
-        input2 = data.pre_b
-
-        m.d.comb += [
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_read == 0),
-            Assert(data.addresses_written == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+    def check(self, m: Module):
+        input1 = self.data.pre_a
+        input2 = self.data.pre_b
 
         carry_in = Signal()
         sum9 = Signal(9)
@@ -56,7 +47,7 @@ class Formal(Verification):
             sum9.eq(input1 + input2 + carry_in),
             sum8.eq(input1[:7] + input2[:7] + carry_in),
             sum5.eq(input1[:4] + input2[:4] + carry_in),
-            Assert(data.post_a == sum9[:8]),
         ]
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=z, N=n, V=v, C=c, H=h)
+        self.assert_cycles(m, 2)
+        self.assert_registers(m, A=sum9, PC=self.data.pre_pc+1)
+        self.assert_flags(m, Z=z, N=n, V=v, C=c, H=h)

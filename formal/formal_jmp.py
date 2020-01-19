@@ -16,42 +16,33 @@
 from nmigen import Signal, Value, Cat, Module
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
-from .verification import FormalData, Verification
+from .verification import FormalData, Verification, LCat
 from consts.consts import ModeBits
 
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("011-1110")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        mode = instr[4:6]
-
-        m.d.comb += [
-            Assert(data.post_ccs == data.pre_ccs),
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_written == 0),
-        ]
+    def check(self, m: Module):
+        mode = self.instr[4:6]
+        self.assert_flags(m)
 
         with m.If(mode == ModeBits.EXTENDED.value):
-            m.d.comb += [
-                Assert(data.addresses_read == 2),
-                Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-                Assert(data.read_addr[1] == data.plus16(data.pre_pc, 2)),
-                Assert(
-                    data.post_pc == Cat(data.read_data[1], data.read_data[0])),
-            ]
+            self.assert_cycles(m, 3)
+            addr_hi = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            addr_lo = self.assert_cycle_signals(
+                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+            self.assert_registers(m, PC=LCat(addr_hi, addr_lo))
 
         with m.If(mode == ModeBits.INDEXED.value):
-            m.d.comb += [
-                Assert(data.addresses_read == 1),
-                Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-                Assert(
-                    data.post_pc == (data.pre_x + data.read_data[0])[:16]),
-            ]
+            self.assert_cycles(m, 4)
+            offset = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            self.assert_cycle_signals(m, 2, vma=0, ba=0)
+            self.assert_cycle_signals(m, 3, vma=0, ba=0)
+            self.assert_registers(m, PC=self.data.pre_x + offset)

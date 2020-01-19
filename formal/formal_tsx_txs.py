@@ -25,28 +25,21 @@ TXS = "00110101"
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(TSX, TXS)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.addresses_read == 0),
-            Assert(data.addresses_written == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+    def check(self, m: Module):
+        self.assert_cycles(m, 4)
+        self.assert_cycle_signals(
+            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
-        tsx = instr[0] == 0
-        input = Mux(tsx, data.pre_sp, data.pre_x)
-        output = Mux(tsx, data.post_x, data.post_sp)
-        m.d.comb += Assert(input == output)
-
-        with m.If(instr.matches(TSX)):
-            m.d.comb += Assert(data.post_sp == data.pre_sp)
+        with m.If(self.instr.matches(TSX)):
+            self.assert_registers(m, X=self.data.pre_sp, PC=self.data.pre_pc+1)
         with m.Else():
-            m.d.comb += Assert(data.post_x == data.pre_x)
+            self.assert_registers(m, SP=self.data.pre_x, PC=self.data.pre_pc+1)
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs)
+        self.assert_flags(m)

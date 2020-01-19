@@ -25,24 +25,24 @@ DEC = "01--1010"
 
 class Formal(Alu2Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(INC, DEC)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input, actual_output = self.common_check(m, instr, data)
+    def check(self, m: Module):
+        input, actual_output = self.common_check(m)
         expected_output = Signal(8)
 
-        with m.If(instr.matches(INC)):
+        with m.If(self.instr.matches(INC)):
             m.d.comb += expected_output.eq((input + 1)[:8])
-        with m.If(instr.matches(DEC)):
+        with m.If(self.instr.matches(DEC)):
             m.d.comb += expected_output.eq((input - 1)[:8])
 
         m.d.comb += Assert(expected_output == actual_output)
         z = (expected_output == 0)
         n = expected_output[7]
-        v = Mux(instr.matches(INC), expected_output ==
+        v = Mux(self.instr.matches(INC), expected_output ==
                 0x80, expected_output == 0x7F)
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs, Z=z, N=n, V=v)
+        self.assert_flags(m, Z=z, N=n, V=v)

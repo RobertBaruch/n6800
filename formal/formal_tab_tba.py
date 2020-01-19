@@ -25,32 +25,22 @@ TBA = "00010011"
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(TAB, TBA)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_read == 0),
-            Assert(data.addresses_written == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+    def check(self, m: Module):
+        self.assert_cycles(m, 2)
+        input = Mux(self.instr[0] == 0, self.data.pre_a, self.data.pre_b)
 
-        input = Mux(instr[0] == 0, data.pre_a, data.pre_b)
-        output = Mux(instr[0] == 0, data.post_b, data.post_a)
-        m.d.comb += Assert(input == output)
-
-        with m.If(instr.matches(TAB)):
-            m.d.comb += Assert(data.post_a == data.pre_a)
+        with m.If(self.instr.matches(TAB)):
+            self.assert_registers(m, B=self.data.pre_a, PC=self.data.pre_pc+1)
         with m.Else():
-            m.d.comb += Assert(data.post_b == data.pre_b)
+            self.assert_registers(m, A=self.data.pre_b, PC=self.data.pre_pc+1)
 
         z = (input == 0)
         n = input[7]
         v = 0
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=z, N=n, V=v)
+        self.assert_flags(m, Z=z, N=n, V=v)

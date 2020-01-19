@@ -22,20 +22,18 @@ from .alu_verification import AluVerification
 
 class Formal(AluVerification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("1---0101")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input1, input2, actual_output = self.common_check(m, instr, data)
-        output = input1
+    def check(self, m: Module):
+        input1, input2, actual_output, size, use_a = self.common_check(m)
         flag_output = input1 & input2
 
         z = flag_output == 0
         n = flag_output[7]
         v = 0
 
-        m.d.comb += Assert(actual_output == output)
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=z, N=n, V=v)
+        self.assert_registers(m, PC=self.data.pre_pc+size)
+        self.assert_flags(m, Z=z, N=n, V=v)

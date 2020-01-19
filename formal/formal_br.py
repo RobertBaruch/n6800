@@ -44,32 +44,24 @@ class Branch(IntEnum):
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("0010----")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_ccs == data.pre_ccs),
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_written == 0),
-        ]
+    def check(self, m: Module):
+        self.assert_cycles(m, 4)
+        data = self.assert_cycle_signals(
+            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
-        m.d.comb += [
-            Assert(data.addresses_read == 1),
-            Assert(data.read_addr[0] == data.plus16(data.pre_pc, 1)),
-        ]
-
-        n = data.pre_ccs[Flags.N]
-        z = data.pre_ccs[Flags.Z]
-        v = data.pre_ccs[Flags.V]
-        c = data.pre_ccs[Flags.C]
+        n = self.data.pre_ccs[Flags.N]
+        z = self.data.pre_ccs[Flags.Z]
+        v = self.data.pre_ccs[Flags.V]
+        c = self.data.pre_ccs[Flags.C]
         offset = Signal(signed(8))
-        br = instr[:4]
+        br = self.instr[:4]
 
         take_branch = Array([
             Const(1),
@@ -89,6 +81,8 @@ class Formal(Verification):
             (z | (n ^ v)) == 0,
             (z | (n ^ v)) == 1,
         ])
-        m.d.comb += offset.eq(data.read_data[0])
-        m.d.comb += Assert(data.post_pc == Mux(
-            take_branch[br], (data.pre_pc + 2 + offset)[:16], (data.pre_pc + 2)[:16]))
+        m.d.comb += offset.eq(data)
+        target = Mux(take_branch[br], self.data.pre_pc +
+                     2 + offset, self.data.pre_pc + 2)
+        self.assert_registers(m, PC=target)
+        self.assert_flags(m)

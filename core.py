@@ -27,7 +27,7 @@ import importlib
 from typing import List, Dict, Tuple, Optional
 
 from formal.verification import FormalData, Verification
-from alu8 import ALU8Func, ALU8
+from alu8 import ALU8Func, ALU8, LCat
 from consts.consts import ModeBits, Flags
 
 from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux, signed
@@ -78,11 +78,17 @@ class Core(Elaboratable):
     reg16_map: Dict[IntEnum, Tuple[Signal, bool]]
 
     def __init__(self, verification: Verification = None):
+        # outputs
         self.Addr = Signal(16)
-        self.Din = Signal(8)
         self.Dout = Signal(8)
         self.RW = Signal(reset=1)  # 1 = read, 0 = write
         self.VMA = Signal()  # 1 = address is valid
+        self.BA = Signal()  # 1 = bus available (makes Addr, Data, RW go tristate)
+
+        # inputs
+        self.Din = Signal(8)
+        self.IRQ = Signal()
+        self.NMI = Signal()
 
         # registers
         self.a = Signal(8, reset_less=True)
@@ -133,9 +139,16 @@ class Core(Elaboratable):
         }
 
         # internal state
-        self.reset_state = Signal(2)  # where we are during reset
-        self.cycle = Signal(4)        # where we are during instr processing
-        self.mode = Signal(2)         # mode bits, decoded by ModeBits
+        self.reset_state = Signal(2)      # where we are during reset
+        self.interrupt = Signal()         # whether we're handling an interrupt
+        self.interrupt_vec = Signal(2)    # which interrupt vector to use:
+                                          # 0 = IRQ
+                                          # 1 = SWI
+                                          # 2 = NMI
+                                          # 3 = Reset
+        self.cycle = Signal(4)            # where we are during an instruction
+        self.mode = Signal(2)             # mode bits, decoded by ModeBits
+        self.wai = Signal()               # if waiting for interrupt
 
         self.end_instr_flag = Signal()    # performs end-of-instruction actions
         self.end_instr_addr = Signal(16)  # where the next instruction is
@@ -145,7 +158,7 @@ class Core(Elaboratable):
         self.formalData = FormalData(verification)
 
     def ports(self) -> List[Signal]:
-        return [self.Addr, self.Din, self.Dout, self.RW]
+        return [self.Addr, self.Din, self.Dout, self.RW, self.VMA, self.BA, self.IRQ, self.NMI]
 
     def elaborate(self, platform: Platform) -> Module:
         m = Module()
@@ -156,7 +169,9 @@ class Core(Elaboratable):
         m.d.comb += self.src8_1_select.eq(Reg8.NONE)
         m.d.comb += self.src8_2_select.eq(Reg8.NONE)
         m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
+        m.d.comb += self.wai.eq(0)
         m.d.ph1 += self.VMA.eq(1)
+        m.d.ph1 += self.BA.eq(0)
         m.d.ph1 += self.cycle.eq(self.cycle + 1)
 
         # some common instruction decoding
@@ -173,7 +188,9 @@ class Core(Elaboratable):
 
         self.reset_handler(m)
         with m.If(self.reset_state == 3):
-            with m.If(self.cycle == 0):
+            with m.If(self.interrupt == 1):
+                self.interrupt_handler(m)
+            with m.Elif(self.cycle == 0):
                 self.fetch(m)
             with m.Else():
                 self.execute(m)
@@ -215,12 +232,103 @@ class Core(Elaboratable):
                 self.end_instr(m, reset_vec)
 
     def end_instr_flag_handler(self, m: Module):
-        """Generates logic for handling the end of an instruction."""
+        """Generates logic for what additional actions to do the end of an instruction."""
         with m.If(self.end_instr_flag):
-            m.d.ph1 += self.pc.eq(self.end_instr_addr)
-            m.d.ph1 += self.Addr.eq(self.end_instr_addr)
-            m.d.ph1 += self.RW.eq(1)
-            m.d.ph1 += self.cycle.eq(0)
+
+            with m.If(~self.wai):
+                m.d.ph1 += self.pc.eq(self.end_instr_addr)
+                m.d.ph1 += self.cycle.eq(0)
+                with m.If(self.NMI):
+                    m.d.ph1 += self.interrupt.eq(1)
+                    m.d.ph1 += self.interrupt_vec.eq(2)
+                    m.d.ph1 += self.Addr.eq(self.sp)
+                    m.d.ph1 += self.RW.eq(0)
+                    m.d.ph1 += self.Dout.eq(self.end_instr_addr[:8])
+                with m.Elif(self.IRQ & ~self.ccs[Flags.I]):
+                    m.d.ph1 += self.interrupt.eq(1)
+                    m.d.ph1 += self.interrupt_vec.eq(0)
+                    m.d.ph1 += self.Addr.eq(self.sp)
+                    m.d.ph1 += self.RW.eq(0)
+                    m.d.ph1 += self.Dout.eq(self.end_instr_addr[:8])
+                with m.Else():
+                    m.d.ph1 += self.interrupt.eq(0)
+                    m.d.ph1 += self.Addr.eq(self.end_instr_addr)
+                    m.d.ph1 += self.RW.eq(1)
+
+            with m.Else():
+                m.d.ph1 += self.cycle.eq(self.cycle)
+                with m.If(self.NMI):
+                    m.d.ph1 += self.interrupt.eq(1)
+                    m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
+                    m.d.ph1 += self.Addr.eq(0xFFFC)
+                    m.d.ph1 += self.VMA.eq(1)
+                    m.d.ph1 += self.RW.eq(1)
+                    m.d.ph1 += self.cycle.eq(8)
+                with m.Elif(self.IRQ & ~self.ccs[Flags.I]):
+                    m.d.ph1 += self.interrupt.eq(1)
+                    m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
+                    m.d.ph1 += self.Addr.eq(0xFFF8)
+                    m.d.ph1 += self.VMA.eq(1)
+                    m.d.ph1 += self.RW.eq(1)
+                    m.d.ph1 += self.cycle.eq(8)
+                with m.Else():
+                    m.d.ph1 += self.VMA.eq(0)
+                    m.d.ph1 += self.BA.eq(1)
+
+    def interrupt_handler(self, m: Module):
+        with m.Switch(self.cycle):
+            with m.Case(0):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.pc[8:])
+
+            with m.Case(1):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.x[:8])
+
+            with m.Case(2):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.x[8:])
+
+            with m.Case(3):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.a)
+
+            with m.Case(4):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.b)
+
+            with m.Case(5):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.RW.eq(0)
+                m.d.ph1 += self.Dout.eq(self.ccs)
+
+            with m.Case(6):
+                m.d.ph1 += self.Addr.eq(self.Addr - 1)
+                m.d.ph1 += self.sp.eq(self.Addr - 1)
+                m.d.ph1 += self.VMA.eq(0)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.Case(7):
+                m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
+                m.d.ph1 += self.Addr.eq(0xFFF8 | (self.interrupt_vec << 1))
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.Case(8):
+                m.d.ph1 += self.tmp8.eq(self.Din)
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.ph1 += self.VMA.eq(1)
+                m.d.ph1 += self.RW.eq(1)
+
+            with m.Case(9):
+                m.d.ph1 += self.interrupt.eq(0)
+                self.end_instr(m, LCat(self.tmp8, self.Din))
+
 
     def fetch(self, m: Module):
         """Fetch the opcode at PC, which should already be on the address lines.
@@ -243,17 +351,31 @@ class Core(Elaboratable):
         takes place using combinatorial statements.
         """
         if self.verification is not None:
+
             with m.If((self.cycle == 0) & (self.reset_state == 3)):
-                with m.If(self.verification.valid(self.Din)):
-                    self.formalData.preSnapshot(
+
+                with m.If(self.verification.valid(self.Din) & (~self.interrupt)):
+                    m.d.ph1 += self.formalData.preSnapshot(
                         m, self.Din, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
                 with m.Else():
-                    self.formalData.noSnapshot(m)
+                    m.d.ph1 += self.formalData.noSnapshot(m)
 
                 with m.If(self.formalData.snapshot_taken):
-                    self.formalData.postSnapshot(
+                    m.d.comb += self.formalData.postSnapshot(
                         m, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
-                    self.verification.check(m, self.instr, self.formalData)
+                    self.verification.verify(m, self.instr, self.formalData)
+
+            with m.Elif(Past(self.wai) & self.formalData.snapshot_taken):
+                m.d.comb += self.formalData.postSnapshot(
+                    m, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
+                self.verification.verify(m, self.instr, self.formalData)
+                m.d.ph1 += self.formalData.noSnapshot(m)
+
+            with m.Elif(self.formalData.snapshot_taken):
+                m.d.ph1 += self.formalData.snapshot_signals(
+                    m, addr=self.Addr, din=self.Din, dout=self.Dout, rw=self.RW,
+                    vma=self.VMA, ba=self.BA, irq=self.IRQ, nmi=self.NMI)
+
 
     def execute(self, m: Module):
         """Execute the instruction in the instr register."""
@@ -292,6 +414,12 @@ class Core(Elaboratable):
                 self.PSH(m)
             with m.Case("00111001"):  # RTS
                 self.RTS(m)
+            with m.Case("00111011"):  # RTI
+                self.RTI(m)
+            with m.Case("00111110"):  # WAI
+                self.WAI(m)
+            with m.Case("00111111"):  # SWI
+                self.SWI(m)
             with m.Case("01--0000"):  # NEG
                 self.ALU2(m, ALU8Func.SUB, 0, 1)
             with m.Case("01--0011"):  # COM
@@ -364,14 +492,13 @@ class Core(Elaboratable):
         with m.If(self.cycle == cycle):
             m.d.ph1 += self.Addr.eq(addr)
             m.d.ph1 += self.RW.eq(1)
+            m.d.ph1 += self.VMA.eq(1)
 
         with m.If(self.cycle == cycle + 1):
             if comb_dest is not None:
                 m.d.comb += comb_dest.eq(self.Din)
             if sync_dest is not None:
                 m.d.ph1 += sync_dest.eq(self.Din)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
 
     def ALU(self, m: Module, func: ALU8Func, store: bool = True):
         b = self.instr[6]
@@ -472,9 +599,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.VMA.eq(0)
 
             with m.Elif(self.cycle == 5):
-                if store:
-                    if self.verification is not None:
-                        self.formalData.write(m, self.Addr, self.Dout)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
@@ -500,9 +624,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.VMA.eq(0)
 
             with m.If(self.cycle == 6):
-                if store:
-                    if self.verification is not None:
-                        self.formalData.write(m, self.Addr, self.Dout)
                 self.end_instr(m, self.pc)
 
     def BR(self, m: Module):
@@ -511,9 +632,13 @@ class Core(Elaboratable):
         relative = Signal(signed(8))
         m.d.comb += relative.eq(operand)
 
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.VMA.eq(0)
+
         # At this point, pc is the instruction start + 2, so we just
         # add the signed relative offset to get the target.
         with m.If(self.cycle == 2):
+            m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.tmp16.eq(self.pc + relative)
 
         with m.If(self.cycle == 3):
@@ -546,6 +671,12 @@ class Core(Elaboratable):
         self.end_instr(m, self.pc)
 
     def TSX_TXS(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.VMA.eq(0)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.VMA.eq(0)
+            
         with m.If(self.cycle == 3):
             with m.If(self.instr[0] == 0):  # TSX
                 m.d.ph1 += self.x.eq(self.sp)
@@ -554,6 +685,12 @@ class Core(Elaboratable):
             self.end_instr(m, self.pc)
 
     def INS_DES(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.VMA.eq(0)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.VMA.eq(0)
+            
         with m.If(self.cycle == 3):
             with m.If(self.instr[0] == 1):  # INS
                 m.d.ph1 += self.sp.eq(self.sp + 1)
@@ -588,8 +725,6 @@ class Core(Elaboratable):
                 m.d.ph1 += self.a.eq(self.Din)
             with m.Else():
                 m.d.ph1 += self.b.eq(self.Din)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
             self.end_instr(m, self.pc)
 
     def PSH(self, m: Module):
@@ -603,8 +738,6 @@ class Core(Elaboratable):
             m.d.ph1 += self.Addr.eq(self.Addr - 1)
             m.d.ph1 += self.RW.eq(1)
             m.d.ph1 += self.VMA.eq(0)
-            if self.verification is not None:
-                self.formalData.write(m, self.Addr, self.Dout)
 
         with m.If(self.cycle == 3):
             m.d.ph1 += self.sp.eq(self.Addr)
@@ -627,8 +760,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[8:].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 3):
                 with m.If(lds):
@@ -637,8 +768,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[:8].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.EXTENDED.value):
@@ -655,8 +784,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[8:].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 4):
                 with m.If(lds):
@@ -665,8 +792,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[:8].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
@@ -678,8 +803,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[8:].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 2):
                 with m.If(lds):
@@ -688,8 +811,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[:8].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.Addr + 1)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
@@ -706,8 +827,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[8:].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 5):
                 with m.If(lds):
@@ -716,8 +835,6 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[:8].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
     def CPX(self, m: Module):
@@ -732,15 +849,11 @@ class Core(Elaboratable):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 3):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.EXTENDED.value):
@@ -754,15 +867,11 @@ class Core(Elaboratable):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 4):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
@@ -771,15 +880,11 @@ class Core(Elaboratable):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 2):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.Addr + 1)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
@@ -793,15 +898,11 @@ class Core(Elaboratable):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
 
             with m.If(self.cycle == 5):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                if self.verification is not None:
-                    self.formalData.read(m, self.Addr, self.Din)
                 self.end_instr(m, self.pc)
 
     def STS_STX(self, m: Module):
@@ -832,12 +933,8 @@ class Core(Elaboratable):
                     m.d.comb += self.src8_2.eq(self.x[:8])
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.ph1 += self.Dout.eq(self.alu8)
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 4):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.EXTENDED.value):
@@ -865,12 +962,8 @@ class Core(Elaboratable):
                     m.d.comb += self.src8_2.eq(self.x[:8])
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.ph1 += self.Dout.eq(self.alu8)
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 5):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 self.end_instr(m, self.pc)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
@@ -898,12 +991,8 @@ class Core(Elaboratable):
                     m.d.comb += self.src8_2.eq(self.x[:8])
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.ph1 += self.Dout.eq(self.alu8)
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 6):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 self.end_instr(m, self.pc)
 
     def RTS(self, m: Module):
@@ -922,13 +1011,9 @@ class Core(Elaboratable):
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.RW.eq(1)
             m.d.ph1 += self.VMA.eq(1)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
 
         with m.If(self.cycle == 4):
             m.d.ph1 += self.sp.eq(self.Addr)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
             self.end_instr(m, Cat(self.Din, self.tmp8))
 
     def BSR(self, m: Module):
@@ -954,15 +1039,11 @@ class Core(Elaboratable):
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(0)
             m.d.ph1 += self.Dout.eq(self.pc[8:])
-            if self.verification is not None:
-                self.formalData.write(m, self.Addr, self.Dout)
 
         with m.If(self.cycle == 4):
             m.d.ph1 += self.Addr.eq(self.Addr - 1)
             m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.RW.eq(1)
-            if self.verification is not None:
-                self.formalData.write(m, self.Addr, self.Dout)
 
         with m.If(self.cycle == 5):
             m.d.ph1 += self.VMA.eq(0)
@@ -979,6 +1060,10 @@ class Core(Elaboratable):
         with m.If(self.instr[4] == 1):  # extended
             _ = self.mode_ext(m)  # output is in tmp16 on cycle 3
 
+            with m.If(self.cycle == 2):
+                # TODO: needs to be checked
+                m.d.ph1 += self.VMA.eq(0)
+
             with m.If(self.cycle == 3):
                 m.d.ph1 += self.Addr.eq(self.sp)
                 m.d.ph1 += self.VMA.eq(1)
@@ -990,21 +1075,18 @@ class Core(Elaboratable):
                 m.d.ph1 += self.VMA.eq(1)
                 m.d.ph1 += self.RW.eq(0)
                 m.d.ph1 += self.Dout.eq(self.pc[8:])
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 5):
                 m.d.ph1 += self.Addr.eq(self.Addr - 1)
                 m.d.ph1 += self.VMA.eq(0)
                 m.d.ph1 += self.RW.eq(1)
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 6):
                 m.d.ph1 += self.VMA.eq(0)
                 m.d.ph1 += self.sp.eq(self.Addr)
 
             with m.If(self.cycle == 7):
+                # TODO: needs to be checked
                 m.d.ph1 += self.VMA.eq(0)
                 m.d.ph1 += self.Addr.eq(self.tmp16)
 
@@ -1025,15 +1107,11 @@ class Core(Elaboratable):
                 m.d.ph1 += self.VMA.eq(1)
                 m.d.ph1 += self.RW.eq(0)
                 m.d.ph1 += self.Dout.eq(self.pc[8:])
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 4):
                 m.d.ph1 += self.Addr.eq(self.Addr - 1)
                 m.d.ph1 += self.VMA.eq(0)
                 m.d.ph1 += self.RW.eq(1)
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
 
             with m.If(self.cycle == 5):
                 m.d.ph1 += self.VMA.eq(0)
@@ -1045,6 +1123,156 @@ class Core(Elaboratable):
 
             with m.If(self.cycle == 7):
                 self.end_instr(m, self.tmp16)
+
+    def SWI(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[:8])
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[8:])
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.x[:8])
+
+        with m.If(self.cycle == 4):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.x[8:])
+
+        with m.If(self.cycle == 5):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.a)
+
+        with m.If(self.cycle == 6):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.b)
+
+        with m.If(self.cycle == 7):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.ccs)
+
+        with m.If(self.cycle == 8):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.sp.eq(self.Addr - 1)
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 9):
+            m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
+            m.d.ph1 += self.Addr.eq(0xFFFA)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 10):
+            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 11):
+            self.end_instr(m, LCat(self.tmp8, self.Din))
+
+    def WAI(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[:8])
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.pc[8:])
+
+        with m.If(self.cycle == 3):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.x[:8])
+
+        with m.If(self.cycle == 4):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.x[8:])
+
+        with m.If(self.cycle == 5):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.a)
+
+        with m.If(self.cycle == 6):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.b)
+
+        with m.If(self.cycle == 7):
+            m.d.ph1 += self.Addr.eq(self.Addr - 1)
+            m.d.ph1 += self.RW.eq(0)
+            m.d.ph1 += self.Dout.eq(self.ccs)
+
+        with m.If(self.cycle == 8):
+            m.d.ph1 += self.sp.eq(self.Addr)
+            m.d.comb += self.wai.eq(1)
+            self.end_instr(m, 0)
+
+    def RTI(self, m: Module):
+        with m.If(self.cycle == 1):
+            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 2):
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 3):
+            m.d.comb += self.alu8_func.eq(ALU8Func.SEF)
+            m.d.comb += self.src8_1.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 4):
+            m.d.ph1 += self.b.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 5):
+            m.d.ph1 += self.a.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 6):
+            m.d.ph1 += self.x[8:].eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 7):
+            m.d.ph1 += self.x[:8].eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 8):
+            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
+            m.d.ph1 += self.VMA.eq(1)
+            m.d.ph1 += self.RW.eq(1)
+
+        with m.If(self.cycle == 9):
+            m.d.ph1 += self.sp.eq(self.Addr)
+            self.end_instr(m, LCat(self.tmp8, self.Din))
 
     def DAA(self, m: Module):
         m.d.comb += self.src8_1.eq(self.a)
@@ -1126,8 +1354,6 @@ class Core(Elaboratable):
                 m.d.ph1 += self.RW.eq(0)
 
             with m.If(self.cycle == 3):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 self.end_instr(m, self.pc)
@@ -1148,8 +1374,6 @@ class Core(Elaboratable):
                 m.d.ph1 += self.RW.eq(0)
 
             with m.If(self.cycle == 4):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 self.end_instr(m, self.pc)
@@ -1170,8 +1394,6 @@ class Core(Elaboratable):
                 m.d.ph1 += self.RW.eq(0)
 
             with m.If(self.cycle == 5):
-                if self.verification is not None:
-                    self.formalData.write(m, self.Addr, self.Dout)
                 m.d.comb += self.src8_2.eq(Mux(b, self.b, self.a))
                 m.d.comb += self.alu8_func.eq(ALU8Func.LD)
                 self.end_instr(m, self.pc)
@@ -1235,8 +1457,7 @@ class Core(Elaboratable):
             m.d.ph1 += self.pc.eq(self.pc + 1)
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
+            m.d.ph1 += self.VMA.eq(1)
 
         return operand
 
@@ -1254,8 +1475,7 @@ class Core(Elaboratable):
             m.d.ph1 += self.pc.eq(self.pc + 1)
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
+            m.d.ph1 += self.VMA.eq(1)
 
         return operand
 
@@ -1276,8 +1496,6 @@ class Core(Elaboratable):
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
             m.d.ph1 += self.VMA.eq(0)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
 
         with m.If(self.cycle == 2):
             # Output during cycle 3:
@@ -1300,14 +1518,12 @@ class Core(Elaboratable):
             m.d.ph1 += self.pc.eq(self.pc + 1)
             m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
+            m.d.ph1 += self.VMA.eq(1)
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.tmp16[:8].eq(self.Din)
             m.d.ph1 += self.pc.eq(self.pc + 1)
-            if self.verification is not None:
-                self.formalData.read(m, self.Addr, self.Din)
+            m.d.ph1 += self.VMA.eq(1)
 
         return operand
 
@@ -1355,7 +1571,7 @@ if __name__ == "__main__":
                               core.end_instr_flag)
 
         # Verify reset does what it's supposed to
-        with m.If(Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst)):
+        with m.If(Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst) & ~Past(core.NMI)):
             m.d.ph1 += Assert(Past(core.Addr, 2) == 0xFFFE)
             m.d.ph1 += Assert(Past(core.Addr) == 0xFFFF)
             m.d.ph1 += Assert(core.Addr[8:] == Past(core.Din, 2))
@@ -1367,12 +1583,16 @@ if __name__ == "__main__":
     else:
         # Fake memory
         mem = {
+            0xFFFC: 0xF0,
+            0xFFFD: 0xF0,
             0xFFFE: 0x12,
             0xFFFF: 0x34,
-            0x1234: 0x20,  # BRA 0x1234
-            0x1235: 0xFE,
-            0x1236: 0x01,  # NOP
-            0xA010: 0x01,  # NOP
+            0x1234: 0x20,  # BRA 0x1236
+            0x1235: 0x00,
+            0x1236: 0x3E,  # WAI
+            0x1237: 0x01,  # NOP
+            0xF0F0: 0x01,  # NOP
+            0xF0F1: 0x01,  # NOP
         }
         with m.Switch(core.Addr):
             for addr, data in mem.items():
@@ -1385,22 +1605,14 @@ if __name__ == "__main__":
         sim.add_clock(1e-6, domain="ph1")
 
         def process():
+            for _ in range(20):
+                yield
+            yield core.NMI.eq(1)
             yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
-            yield
+            yield core.NMI.eq(0)
+            for _ in range(20):
+                yield
+
 
         sim.add_sync_process(process, domain="ph1")
         with sim.write_vcd("test.vcd", "test.gtkw", traces=core.ports()):

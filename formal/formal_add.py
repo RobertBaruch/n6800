@@ -23,19 +23,19 @@ from .alu_verification import AluVerification
 
 class Formal(AluVerification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("1---10-1")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input1, input2, actual_output = self.common_check(m, instr, data)
+    def check(self, m: Module):
+        input1, input2, actual_output, size, use_a = self.common_check(m)
 
         carry_in = Signal()
         sum9 = Signal(9)
         sum8 = Signal(8)
         sum5 = Signal(5)
-        with_carry = (instr[1] == 0)
+        with_carry = (self.instr[1] == 0)
 
         h = sum5[4]
         n = sum9[7]
@@ -44,7 +44,7 @@ class Formal(AluVerification):
         v = (sum8[7] ^ c)
 
         with m.If(with_carry):
-            m.d.comb += carry_in.eq(data.pre_ccs[Flags.C])
+            m.d.comb += carry_in.eq(self.data.pre_ccs[Flags.C])
         with m.Else():
             m.d.comb += carry_in.eq(0)
 
@@ -52,7 +52,10 @@ class Formal(AluVerification):
             sum9.eq(input1 + input2 + carry_in),
             sum8.eq(input1[:7] + input2[:7] + carry_in),
             sum5.eq(input1[:4] + input2[:4] + carry_in),
-            Assert(actual_output == sum9[:8]),
         ]
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=z, N=n, V=v, C=c, H=h)
+
+        with m.If(use_a):
+            self.assert_registers(m, A=sum9, PC=self.data.pre_pc+size)
+        with m.Else():
+            self.assert_registers(m, B=sum9, PC=self.data.pre_pc+size)
+        self.assert_flags(m, Z=z, N=n, V=v, C=c, H=h)

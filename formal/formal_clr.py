@@ -18,19 +18,19 @@ from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
 from .verification import FormalData
 from .alu_verification import Alu2Verification
+from consts.consts import ModeBits
 
 
 class Formal(Alu2Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("01--1111")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input, actual_output = self.common_check(m, instr, data)
-        expected_output = 0
+    def check(self, m: Module):
+        input, actual_output = self.common_check(m)
 
-        m.d.comb += Assert(expected_output == actual_output)
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=1, N=0, V=0, C=0)
+        m.d.comb += Assert(0 == actual_output)
+
+        self.assert_flags(m, Z=1, N=0, V=0, C=0)

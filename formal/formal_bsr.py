@@ -16,39 +16,33 @@
 from nmigen import Signal, Value, Cat, Module, Mux, signed
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
-from .verification import FormalData, Verification
+from .verification import FormalData, Verification, LCat
 
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("10001101")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        ret_addr = (data.pre_pc + 2)[:16]
+    def check(self, m: Module):
+        ret_addr = (self.data.pre_pc + 2)[:16]
         offset = Signal(signed(8))
-        target = (ret_addr + offset)[:16]
 
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-        ]
-        m.d.comb += Assert(data.post_pc == target)
-        m.d.comb += Assert(data.post_sp == (data.pre_sp - 2)[:16])
+        self.assert_cycles(m, 8)
+        data = self.assert_cycle_signals(
+            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        ret_addr_lo = self.assert_cycle_signals(
+            m, 3, address=self.data.pre_sp, vma=1, rw=0, ba=0)
+        ret_addr_hi = self.assert_cycle_signals(
+            m, 4, address=self.data.pre_sp-1, vma=1, rw=0, ba=0)
+        self.assert_cycle_signals(m, 5, vma=0, ba=0)
+        self.assert_cycle_signals(m, 6, vma=0, ba=0)
+        self.assert_cycle_signals(m, 7, vma=0, ba=0)
+        m.d.comb += offset.eq(data)
 
-        m.d.comb += [
-            Assert(data.addresses_read == 1),
-            Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-            offset.eq(data.read_data[0]),
-
-            Assert(data.addresses_written == 2),
-            Assert(data.write_addr[0] == data.pre_sp),
-            Assert(data.write_data[0] == ret_addr[:8]),
-            Assert(data.write_addr[1] == (data.pre_sp - 1)[:16]),
-            Assert(data.write_data[1] == ret_addr[8:]),
-        ]
-
-        self.assertFlags(m, data.post_ccs, data.pre_ccs)
+        m.d.comb += Assert(LCat(ret_addr_hi, ret_addr_lo) == ret_addr)
+        self.assert_registers(m, PC=ret_addr + offset, SP=self.data.pre_sp-2)
+        self.assert_flags(m)

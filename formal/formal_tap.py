@@ -17,23 +17,24 @@ from nmigen import Signal, Value, Cat, Module, Mux
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert
 from .verification import FormalData, Verification
+from consts.consts import Flags
 
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("00000110")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_written == 0),
-            Assert(data.addresses_read == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1))
-        m.d.comb += Assert(data.post_ccs == (0b11000000 | data.pre_a))
+    def check(self, m: Module):
+        self.assert_cycles(m, 2)
+        self.assert_registers(m, PC=self.data.pre_pc+1)
+        self.assert_flags(m,
+                          H=self.data.pre_a[Flags.H],
+                          I=self.data.pre_a[Flags.I],
+                          N=self.data.pre_a[Flags.N],
+                          Z=self.data.pre_a[Flags.Z],
+                          V=self.data.pre_a[Flags.V],
+                          C=self.data.pre_a[Flags.C]
+                          )

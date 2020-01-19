@@ -41,18 +41,18 @@ LSR = "01--0100"
 
 class Formal(Alu2Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(ROL, ROR, ASL, ASR, LSR)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        input, actual_output = self.common_check(m, instr, data)
+    def check(self, m: Module):
+        input, actual_output = self.common_check(m)
         expected_output = Signal(8)
-        pre_c = data.pre_ccs[Flags.C]
+        pre_c = self.data.pre_ccs[Flags.C]
         c = Signal()
 
-        with m.If(instr.matches(ROL)):
+        with m.If(self.instr.matches(ROL)):
             # input[7..0], c ->
             # c, output[7..0]
             m.d.comb += [
@@ -60,7 +60,7 @@ class Formal(Alu2Verification):
                 expected_output[0].eq(pre_c),
                 Downto(expected_output, 7, 1).eq(Downto(input, 6, 0)),
             ]
-        with m.Elif(instr.matches(ROR)):
+        with m.Elif(self.instr.matches(ROR)):
             # c, input[7..0] ->
             # output[7..0], c
             m.d.comb += [
@@ -68,7 +68,7 @@ class Formal(Alu2Verification):
                 expected_output[7].eq(pre_c),
                 Downto(expected_output, 6, 0).eq(Downto(input, 7, 1)),
             ]
-        with m.Elif(instr.matches(ASL)):
+        with m.Elif(self.instr.matches(ASL)):
             # input[7..0], 0 ->
             # c, output[7..0]
             m.d.comb += [
@@ -76,7 +76,7 @@ class Formal(Alu2Verification):
                 expected_output[0].eq(0),
                 Downto(expected_output, 7, 1).eq(Downto(input, 6, 0)),
             ]
-        with m.Elif(instr.matches(ASR)):
+        with m.Elif(self.instr.matches(ASR)):
             # input[7], input[7..0] ->
             # output[7..0], c
             m.d.comb += [
@@ -84,7 +84,7 @@ class Formal(Alu2Verification):
                 expected_output[7].eq(input[7]),
                 Downto(expected_output, 6, 0).eq(Downto(input, 7, 1)),
             ]
-        with m.Elif(instr.matches(LSR)):
+        with m.Elif(self.instr.matches(LSR)):
             # 0, input[7..0] ->
             # output[7..0], c
             m.d.comb += [
@@ -97,5 +97,4 @@ class Formal(Alu2Verification):
         n = expected_output[7]
         z = (expected_output == 0)
         v = n ^ c
-        self.assertFlags(m, data.post_ccs, data.pre_ccs,
-                         Z=z, N=n, V=v, C=c)
+        self.assert_flags(m, Z=z, N=n, V=v, C=c)

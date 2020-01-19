@@ -24,45 +24,55 @@ JSR_EXT = "10111101"
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(JSR_IND, JSR_EXT)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        ret_addr = Mux(instr.matches(JSR_EXT),
-                       (data.pre_pc + 3)[:16], (data.pre_pc + 2)[:16])
+    def check(self, m: Module):
+        with m.If(self.instr.matches(JSR_EXT)):
+            self.assert_cycles(m, 9)
+            addr_hi = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            addr_lo = self.assert_cycle_signals(
+                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
 
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-        ]
+            # I am not convinced the datasheet is correct for this cycle.
+            # It claims there is a read of the target address here.
+            self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
-        m.d.comb += Assert(data.post_sp == (data.pre_sp - 2)[:16])
+            retaddr_lo = self.assert_cycle_signals(
+                m, 4, address=self.data.pre_sp, vma=1, rw=0, ba=0)
+            retaddr_hi = self.assert_cycle_signals(
+                m, 5, address=self.data.pre_sp - 1, vma=1, rw=0, ba=0)
+            self.assert_cycle_signals(m, 6, vma=0, ba=0)
+            self.assert_cycle_signals(m, 7, vma=0, ba=0)
 
-        m.d.comb += [
-            Assert(data.addresses_written == 2),
-            Assert(data.write_addr[0] == data.pre_sp),
-            Assert(data.write_data[0] == ret_addr[:8]),
-            Assert(data.write_addr[1] == (data.pre_sp - 1)[:16]),
-            Assert(data.write_data[1] == ret_addr[8:]),
-        ]
+            # I am not convinced the datasheet is correct for this cycle.
+            # It claims there is a read of the pc+2 here.
+            self.assert_cycle_signals(m, 8, vma=0, ba=0)
 
-        with m.If(instr.matches(JSR_EXT)):
-            m.d.comb += [
-                Assert(data.addresses_read == 2),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-                Assert(data.read_addr[1] == (data.pre_pc + 2)[:16]),
-            ]
-            m.d.comb += Assert(data.post_pc ==
-                               LCat(data.read_data[0], data.read_data[1]))
+            self.assert_registers(m, SP=self.data.pre_sp-2,
+                                  PC=LCat(addr_hi, addr_lo))
+            m.d.comb += Assert(LCat(retaddr_hi, retaddr_lo)
+                               == (self.data.pre_pc+3)[:16])
+
         with m.Else():
-            m.d.comb += [
-                Assert(data.addresses_read == 1),
-                Assert(data.read_addr[0] == (data.pre_pc + 1)[:16]),
-            ]
-            m.d.comb += Assert(data.post_pc ==
-                               (data.pre_x + data.read_data[0])[:16])
+            self.assert_cycles(m, 8)
+            offset = self.assert_cycle_signals(
+                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            self.assert_cycle_signals(m, 2, vma=0, ba=0)
+            retaddr_lo = self.assert_cycle_signals(
+                m, 3, address=self.data.pre_sp, vma=1, rw=0, ba=0)
+            retaddr_hi = self.assert_cycle_signals(
+                m, 4, address=self.data.pre_sp - 1, vma=1, rw=0, ba=0)
+            self.assert_cycle_signals(m, 5, vma=0, ba=0)
+            self.assert_cycle_signals(m, 6, vma=0, ba=0)
+            self.assert_cycle_signals(m, 7, vma=0, ba=0)
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs)
+            self.assert_registers(m, SP=self.data.pre_sp-2,
+                                  PC=self.data.pre_x + offset)
+            m.d.comb += Assert(LCat(retaddr_hi, retaddr_lo)
+                               == (self.data.pre_pc+2)[:16])
+
+        self.assert_flags(m)

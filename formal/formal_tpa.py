@@ -21,19 +21,13 @@ from .verification import FormalData, Verification
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("00000111")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_ccs == data.pre_ccs),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.post_sp == data.pre_sp),
-            Assert(data.addresses_written == 0),
-            Assert(data.addresses_read == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1))
-        m.d.comb += Assert(data.post_a == (0b11000000 | data.pre_ccs))
+    def check(self, m: Module):
+        self.assert_cycles(m, 2)
+        self.assert_registers(
+            m, A=(0b11000000 | self.data.pre_ccs), PC=self.data.pre_pc+1)
+        self.assert_flags(m)

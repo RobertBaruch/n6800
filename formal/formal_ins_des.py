@@ -25,23 +25,21 @@ DES = "00110100"
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches(INS, DES)
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        m.d.comb += [
-            Assert(data.post_a == data.pre_a),
-            Assert(data.post_b == data.pre_b),
-            Assert(data.post_x == data.pre_x),
-            Assert(data.addresses_read == 0),
-            Assert(data.addresses_written == 0),
-        ]
-        Assert(data.post_pc == data.plus16(data.pre_pc, 1)),
+    def check(self, m: Module):
+        self.assert_cycles(m, 4)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
-        ins = instr[0] == 1
-        output = Mux(ins, (data.pre_sp + 1)[:16], (data.pre_sp - 1)[:16])
-        m.d.comb += Assert(data.post_sp == output)
+        with m.If(self.instr.matches(INS)):
+            self.assert_registers(m, SP=self.data.pre_sp +
+                                  1, PC=self.data.pre_pc+1)
+        with m.Else():
+            self.assert_registers(m, SP=self.data.pre_sp -
+                                  1, PC=self.data.pre_pc+1)
 
-        self.assertFlags(m, data.post_ccs, data.pre_ccs)
+        self.assert_flags(m)

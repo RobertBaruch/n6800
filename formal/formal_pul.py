@@ -22,31 +22,26 @@ from consts.consts import ModeBits
 
 class Formal(Verification):
     def __init__(self):
-        pass
+        super().__init__()
 
     def valid(self, instr: Value) -> Value:
         return instr.matches("0011001-")
 
-    def check(self, m: Module, instr: Value, data: FormalData):
-        pull_a = instr[0] == 0
-        output = Mux(pull_a, data.post_a, data.post_b)
+    def check(self, m: Module):
+        pull_a = self.instr[0] == 0
 
-        m.d.comb += [
-            Assert(data.post_x == data.pre_x),
-            Assert(data.addresses_written == 0),
-        ]
-        m.d.comb += Assert(data.post_pc == data.plus16(data.pre_pc, 1))
-        m.d.comb += Assert(data.post_sp == data.plus16(data.pre_sp, 1))
+        self.assert_cycles(m, 4)
+        self.assert_cycle_signals(
+            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 2, vma=0, ba=0)
+        data = self.assert_cycle_signals(
+            m, 3, address=self.data.pre_sp+1, vma=1, rw=1, ba=0)
 
         with m.If(pull_a):
-            m.d.comb += Assert(data.post_b == data.pre_b)
+            self.assert_registers(
+                m, A=data, SP=self.data.pre_sp+1, PC=self.data.pre_pc+1)
         with m.Else():
-            m.d.comb += Assert(data.post_a == data.pre_a)
+            self.assert_registers(
+                m, B=data, SP=self.data.pre_sp+1, PC=self.data.pre_pc+1)
 
-        m.d.comb += [
-            Assert(data.addresses_read == 1),
-            Assert(data.read_addr[0] == data.plus16(data.pre_sp, 1)),
-            Assert(output == data.read_data[0]),
-        ]
-
-        self.assertFlags(m, data.post_ccs, data.pre_ccs)
+        self.assert_flags(m)

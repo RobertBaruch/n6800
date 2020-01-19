@@ -86,35 +86,47 @@ class N6800(Elaboratable):
             ]
 
         # Hook up address lines to pins
+        addr = []
         for i in range(16):
             pin = platform.request("addr", i)
             m.d.comb += pin.o.eq(cpu.Addr[i])
+            addr.append(pin)
 
+        data = []
         if not FAKEMEM:
             # Hook up data in/out + direction to pins
             for i in range(8):
                 pin = platform.request("data", i)
                 m.d.comb += pin.o.eq(cpu.Dout[i])
                 m.d.ph2 += cpu.Din[i].eq(pin.i)
-                m.d.comb += pin.oe.eq(~cpu.RW)
+                data.append(pin)
 
         if FAKEMEM:
             with m.Switch(cpu.Addr):
-                for addr, data in mem.items():
-                    with m.Case(addr):
-                        m.d.comb += cpu.Din.eq(data)
+                for a, d in mem.items():
+                    with m.Case(a):
+                        m.d.comb += cpu.Din.eq(d)
                 with m.Default():
-                    m.d.comb += cpu.Din.eq(0xFF)
+                    m.d.comb += cpu.Din.eq(0x00)
             for i in range(8):
                 pin = platform.request("led", i)
                 m.d.comb += pin.o.eq(cpu.Addr[i])
 
-        for i in range(2):
-            pin = platform.request("reset_state", i)
-            m.d.comb += pin.o.eq(cpu.reset_state[i])
-
         rw = platform.request("rw")
         m.d.comb += rw.o.eq(cpu.RW)
+
+        nIRQ = platform.request("n_irq")
+        nNMI = platform.request("n_nmi")
+        m.d.ph2 += cpu.IRQ.eq(~nIRQ)
+        m.d.ph2 += cpu.NMI.eq(~nNMI)
+
+        ba = platform.request("ba")
+        m.d.comb += ba.o.eq(cpu.BA)
+        m.d.comb += rw.oe.eq(~cpu.BA)
+        for i in range(len(addr)):
+            m.d.comb += addr[i].oe.eq(~cpu.BA)
+        for i in range(len(data)):
+            m.d.comb += data[i].oe.eq(~cpu.BA & ~cpu.RW)
 
         return m
 
@@ -151,14 +163,19 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
         Resource("rst", 0, Pins("K9", dir="i"),
                  Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN4
         *Bus(default_name="addr", pins="B1 B2 C1 C2 D1 D2 E2 F1 F2 G2 H1 H2 J2 J1 K3 K1",
-             dir="o", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
+             dir="oe", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
         *Bus(default_name="data", pins="M3 L5 N3 P1 M4 P2 M5 R1",
              dir="io", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
         *Bus(default_name="led", pins="C3 B3 C4 C5 A1 A2 B4 B5",
              dir="o", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
-        *Bus(default_name="reset_state", pins="L3 L1",
-             dir="o", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("rw", 0, Pins("E4", dir="o"), Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("ba", 0, Pins("M1", dir="o"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("rw", 0, Pins("E4", dir="oe"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_irq", 0, Pins("L3", dir="i"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_nmi", 0, Pins("L1", dir="i"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
     ]
 
     default_clk = "clk1"
