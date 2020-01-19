@@ -40,9 +40,10 @@ class Formal(Alu2Verification):
             m.d.comb += expected_output.eq((input - 1)[:8])
 
         m.d.comb += Assert(expected_output == actual_output)
-        z = (expected_output == 0)
+        z = expected_output == 0
         n = expected_output[7]
-        v = Mux(self.instr.matches(INC), expected_output ==
-                0x80, expected_output == 0x7F)
+        v = Mux(
+            self.instr.matches(INC), expected_output == 0x80, expected_output == 0x7F
+        )
 
         self.assert_flags(m, Z=z, N=n, V=v)

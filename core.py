@@ -43,6 +43,7 @@ class Reg8(IntEnum):
     """Values for specifying an 8-bit register for things
     like sources and destinations. Can also specify the
     (H)igh or (L)ow 8 bits of a 16-bit signal."""
+
     NONE = 0
     A = 1
     B = 2
@@ -62,6 +63,7 @@ class Reg8(IntEnum):
 class Reg16(IntEnum):
     """Values for specifying a 16-bit register for things
     like sources and destinations."""
+
     NONE = 0
     X = 1
     SP = 2
@@ -103,8 +105,8 @@ class Core(Elaboratable):
         # busses
         self.src8_1 = Signal(8)  # Input 1 of the ALU
         self.src8_2 = Signal(8)  # Input 2 of the ALU
-        self.alu8 = Signal(8)   # Output from the ALU
-        self.ccs = Signal(8)    # Flags from the ALU
+        self.alu8 = Signal(8)  # Output from the ALU
+        self.ccs = Signal(8)  # Flags from the ALU
 
         # selectors for busses
         self.src8_1_select = Signal(Reg8)
@@ -139,18 +141,18 @@ class Core(Elaboratable):
         }
 
         # internal state
-        self.reset_state = Signal(2)      # where we are during reset
-        self.interrupt = Signal()         # whether we're handling an interrupt
-        self.interrupt_vec = Signal(2)    # which interrupt vector to use:
-                                          # 0 = IRQ
-                                          # 1 = SWI
-                                          # 2 = NMI
-                                          # 3 = Reset
-        self.cycle = Signal(4)            # where we are during an instruction
-        self.mode = Signal(2)             # mode bits, decoded by ModeBits
-        self.wai = Signal()               # if waiting for interrupt
+        self.reset_state = Signal(2)  # where we are during reset
+        self.interrupt = Signal()  # whether we're handling an interrupt
+        self.interrupt_vec = Signal(2)  # which interrupt vector to use:
+        # 0 = IRQ
+        # 1 = SWI
+        # 2 = NMI
+        # 3 = Reset
+        self.cycle = Signal(4)  # where we are during an instruction
+        self.mode = Signal(2)  # mode bits, decoded by ModeBits
+        self.wai = Signal()  # if waiting for interrupt
 
-        self.end_instr_flag = Signal()    # performs end-of-instruction actions
+        self.end_instr_flag = Signal()  # performs end-of-instruction actions
         self.end_instr_addr = Signal(16)  # where the next instruction is
 
         # Formal verification
@@ -158,7 +160,16 @@ class Core(Elaboratable):
         self.formalData = FormalData(verification)
 
     def ports(self) -> List[Signal]:
-        return [self.Addr, self.Din, self.Dout, self.RW, self.VMA, self.BA, self.IRQ, self.NMI]
+        return [
+            self.Addr,
+            self.Din,
+            self.Dout,
+            self.RW,
+            self.VMA,
+            self.BA,
+            self.IRQ,
+            self.NMI,
+        ]
 
     def elaborate(self, platform: Platform) -> Module:
         m = Module()
@@ -199,7 +210,13 @@ class Core(Elaboratable):
 
         return m
 
-    def src_bus_setup(self, m: Module, reg_map: Dict[IntEnum, Tuple[Signal, bool]], bus: Signal, selector: Signal):
+    def src_bus_setup(
+        self,
+        m: Module,
+        reg_map: Dict[IntEnum, Tuple[Signal, bool]],
+        bus: Signal,
+        selector: Signal,
+    ):
         with m.Switch(selector):
             for e, reg in reg_map.items():
                 with m.Case(e):
@@ -207,7 +224,13 @@ class Core(Elaboratable):
             with m.Default():
                 m.d.comb += bus.eq(0)
 
-    def dest_bus_setup(self, m: Module, reg_map: Dict[IntEnum, Tuple[Signal, bool]], bus: Signal, bitmap: Signal):
+    def dest_bus_setup(
+        self,
+        m: Module,
+        reg_map: Dict[IntEnum, Tuple[Signal, bool]],
+        bus: Signal,
+        bitmap: Signal,
+    ):
         for e, reg in reg_map.items():
             if reg[1]:
                 with m.If(bitmap[e.value]):
@@ -329,7 +352,6 @@ class Core(Elaboratable):
                 m.d.ph1 += self.interrupt.eq(0)
                 self.end_instr(m, LCat(self.tmp8, self.Din))
 
-
     def fetch(self, m: Module):
         """Fetch the opcode at PC, which should already be on the address lines.
         The opcode is on the data lines by the end of the cycle.
@@ -356,26 +378,36 @@ class Core(Elaboratable):
 
                 with m.If(self.verification.valid(self.Din) & (~self.interrupt)):
                     m.d.ph1 += self.formalData.preSnapshot(
-                        m, self.Din, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
+                        m, self.Din, self.ccs, self.a, self.b, self.x, self.sp, self.pc
+                    )
                 with m.Else():
                     m.d.ph1 += self.formalData.noSnapshot(m)
 
                 with m.If(self.formalData.snapshot_taken):
                     m.d.comb += self.formalData.postSnapshot(
-                        m, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
+                        m, self.ccs, self.a, self.b, self.x, self.sp, self.pc
+                    )
                     self.verification.verify(m, self.instr, self.formalData)
 
             with m.Elif(Past(self.wai) & self.formalData.snapshot_taken):
                 m.d.comb += self.formalData.postSnapshot(
-                    m, self.ccs, self.a, self.b, self.x, self.sp, self.pc)
+                    m, self.ccs, self.a, self.b, self.x, self.sp, self.pc
+                )
                 self.verification.verify(m, self.instr, self.formalData)
                 m.d.ph1 += self.formalData.noSnapshot(m)
 
             with m.Elif(self.formalData.snapshot_taken):
                 m.d.ph1 += self.formalData.snapshot_signals(
-                    m, addr=self.Addr, din=self.Din, dout=self.Dout, rw=self.RW,
-                    vma=self.VMA, ba=self.BA, irq=self.IRQ, nmi=self.NMI)
-
+                    m,
+                    addr=self.Addr,
+                    din=self.Din,
+                    dout=self.Dout,
+                    rw=self.RW,
+                    vma=self.VMA,
+                    ba=self.BA,
+                    irq=self.IRQ,
+                    nmi=self.NMI,
+                )
 
     def execute(self, m: Module):
         """Execute the instruction in the instr register."""
@@ -479,7 +511,14 @@ class Core(Elaboratable):
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
 
-    def read_byte(self, m: Module, cycle: int, addr: Statement, comb_dest: Signal = None, sync_dest: Signal = None):
+    def read_byte(
+        self,
+        m: Module,
+        cycle: int,
+        addr: Statement,
+        comb_dest: Signal = None,
+        sync_dest: Signal = None,
+    ):
         """Reads a byte starting from the given cycle.
 
         The address lines are output with the address during cycle+1. At some point during
@@ -559,7 +598,14 @@ class Core(Elaboratable):
                         m.d.ph1 += self.a.eq(self.alu8)
                 self.end_instr(m, self.pc)
 
-    def ALU2(self, m: Module, func: ALU8Func, operand1: int, operand2: int, store: bool = True):
+    def ALU2(
+        self,
+        m: Module,
+        func: ALU8Func,
+        operand1: int,
+        operand2: int,
+        store: bool = True,
+    ):
         with m.If(self.mode == ModeBits.A.value):
             m.d.comb += self.src8_1.eq(Mux(operand1, self.a, 0))
             m.d.comb += self.src8_2.eq(Mux(operand2, self.a, 0))
@@ -676,7 +722,7 @@ class Core(Elaboratable):
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.VMA.eq(0)
-            
+
         with m.If(self.cycle == 3):
             with m.If(self.instr[0] == 0):  # TSX
                 m.d.ph1 += self.x.eq(self.sp)
@@ -690,7 +736,7 @@ class Core(Elaboratable):
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.VMA.eq(0)
-            
+
         with m.If(self.cycle == 3):
             with m.If(self.instr[0] == 1):  # INS
                 m.d.ph1 += self.sp.eq(self.sp + 1)
@@ -1284,21 +1330,24 @@ class Core(Elaboratable):
         """Clears or sets Carry."""
         with m.If(self.cycle == 1):
             m.d.comb += self.alu8_func.eq(
-                Mux(self.instr[0], ALU8Func.SEC, ALU8Func.CLC))
+                Mux(self.instr[0], ALU8Func.SEC, ALU8Func.CLC)
+            )
             self.end_instr(m, self.pc)
 
     def CL_SE_V(self, m: Module):
         """Clears or sets Overflow."""
         with m.If(self.cycle == 1):
             m.d.comb += self.alu8_func.eq(
-                Mux(self.instr[0], ALU8Func.SEV, ALU8Func.CLV))
+                Mux(self.instr[0], ALU8Func.SEV, ALU8Func.CLV)
+            )
             self.end_instr(m, self.pc)
 
     def CL_SE_I(self, m: Module):
         """Clears or sets Interrupt."""
         with m.If(self.cycle == 1):
             m.d.comb += self.alu8_func.eq(
-                Mux(self.instr[0], ALU8Func.SEI, ALU8Func.CLI))
+                Mux(self.instr[0], ALU8Func.SEI, ALU8Func.CLI)
+            )
             self.end_instr(m, self.pc)
 
     def IN_DE_X(self, m: Module):
@@ -1315,8 +1364,7 @@ class Core(Elaboratable):
             m.d.ph1 += self.Addr.eq(self.x)
 
         with m.If(self.cycle == 3):
-            m.d.comb += self.alu8_func.eq(
-                Mux(self.x == 0, ALU8Func.SEZ, ALU8Func.CLZ))
+            m.d.comb += self.alu8_func.eq(Mux(self.x == 0, ALU8Func.SEZ, ALU8Func.CLZ))
             self.end_instr(m, self.pc)
 
     def JMP(self, m: Module):
@@ -1438,8 +1486,9 @@ class Core(Elaboratable):
             with m.Case("110"):  # BGE, BLT
                 m.d.comb += cond.eq(~(self.ccs[Flags.N] ^ self.ccs[Flags.V]))
             with m.Case("111"):  # BGT, BLE
-                m.d.comb += cond.eq(~(self.ccs[Flags.Z] |
-                                      (self.ccs[Flags.N] ^ self.ccs[Flags.V])))
+                m.d.comb += cond.eq(
+                    ~(self.ccs[Flags.Z] | (self.ccs[Flags.N] ^ self.ccs[Flags.V]))
+                )
 
         m.d.comb += take_branch.eq(cond ^ invert)
         return take_branch
@@ -1510,8 +1559,7 @@ class Core(Elaboratable):
         Returns a Statement containing the 16-bit address. After cycle 2, tmp16 
         contains the address.
         """
-        operand = Mux(self.cycle == 2, Cat(
-            self.Din, self.tmp16[8:]), self.tmp16)
+        operand = Mux(self.cycle == 2, Cat(self.Din, self.tmp16[8:]), self.tmp16)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.tmp16[8:].eq(self.Din)
@@ -1565,13 +1613,13 @@ if __name__ == "__main__":
         # m.d.comb += Assume(rst == (cycle2 < 8))
 
         with m.If(cycle2 == 20):
-            m.d.ph1 += Cover(core.formalData.snapshot_taken &
-                             core.end_instr_flag)
-            m.d.ph1 += Assume(core.formalData.snapshot_taken &
-                              core.end_instr_flag)
+            m.d.ph1 += Cover(core.formalData.snapshot_taken & core.end_instr_flag)
+            m.d.ph1 += Assume(core.formalData.snapshot_taken & core.end_instr_flag)
 
         # Verify reset does what it's supposed to
-        with m.If(Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst) & ~Past(core.NMI)):
+        with m.If(
+            Past(rst, 4) & ~Past(rst, 3) & ~Past(rst, 2) & ~Past(rst) & ~Past(core.NMI)
+        ):
             m.d.ph1 += Assert(Past(core.Addr, 2) == 0xFFFE)
             m.d.ph1 += Assert(Past(core.Addr) == 0xFFFF)
             m.d.ph1 += Assert(core.Addr[8:] == Past(core.Din, 2))
@@ -1612,7 +1660,6 @@ if __name__ == "__main__":
             yield core.NMI.eq(0)
             for _ in range(20):
                 yield
-
 
         sim.add_sync_process(process, domain="ph1")
         with sim.write_vcd("test.vcd", "test.gtkw", traces=core.ports()):

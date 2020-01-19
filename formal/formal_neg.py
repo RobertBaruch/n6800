@@ -33,7 +33,7 @@ class Formal(Alu2Verification):
 
         m.d.comb += Assert(expected_output == actual_output)
         n = expected_output[7]
-        z = (expected_output == 0)
-        v = (expected_output == 0x80)
-        c = (expected_output != 0)
+        z = expected_output == 0
+        v = expected_output == 0x80
+        c = expected_output != 0
         self.assert_flags(m, Z=z, N=n, V=v, C=c)

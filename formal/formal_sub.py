@@ -34,12 +34,12 @@ class Formal(AluVerification):
         carry_in = Signal()
         sum9 = Signal(9)
         sum8 = Signal(8)
-        with_carry = (self.instr[1] == 1)
+        with_carry = self.instr[1] == 1
 
         n = sum9[7]
         c = ~sum9[8]
-        z = (sum9[:8] == 0)
-        v = (sum8[7] ^ sum9[8])
+        z = sum9[:8] == 0
+        v = sum8[7] ^ sum9[8]
 
         with m.If(with_carry):
             m.d.comb += carry_in.eq(self.data.pre_ccs[Flags.C])
@@ -52,7 +52,7 @@ class Formal(AluVerification):
         ]
 
         with m.If(use_a):
-            self.assert_registers(m, A=sum9, PC=self.data.pre_pc+size)
+            self.assert_registers(m, A=sum9, PC=self.data.pre_pc + size)
         with m.Else():
-            self.assert_registers(m, B=sum9, PC=self.data.pre_pc+size)
+            self.assert_registers(m, B=sum9, PC=self.data.pre_pc + size)
         self.assert_flags(m, Z=z, N=n, V=v, C=c)

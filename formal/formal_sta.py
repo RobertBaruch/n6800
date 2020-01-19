@@ -35,38 +35,43 @@ class Formal(Verification):
         with m.If(mode == ModeBits.DIRECT.value):
             self.assert_cycles(m, 4)
             addr_lo = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             self.assert_cycle_signals(m, 2, vma=0, ba=0)
-            data = self.assert_cycle_signals(
-                m, 3, address=addr_lo, vma=1, rw=0, ba=0)
+            data = self.assert_cycle_signals(m, 3, address=addr_lo, vma=1, rw=0, ba=0)
 
             m.d.comb += Assert(data == input)
-            self.assert_registers(m, PC=self.data.pre_pc+2)
+            self.assert_registers(m, PC=self.data.pre_pc + 2)
 
         with m.Elif(mode == ModeBits.EXTENDED.value):
             self.assert_cycles(m, 5)
             addr_hi = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             addr_lo = self.assert_cycle_signals(
-                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+                m, 2, address=self.data.pre_pc + 2, vma=1, rw=1, ba=0
+            )
             self.assert_cycle_signals(m, 3, vma=0, ba=0)
             data = self.assert_cycle_signals(
-                m, 4, address=LCat(addr_hi, addr_lo), vma=1, rw=0, ba=0)
+                m, 4, address=LCat(addr_hi, addr_lo), vma=1, rw=0, ba=0
+            )
 
             m.d.comb += Assert(data == input)
-            self.assert_registers(m, PC=self.data.pre_pc+3)
+            self.assert_registers(m, PC=self.data.pre_pc + 3)
 
         with m.Elif(mode == ModeBits.INDEXED.value):
             self.assert_cycles(m, 6)
             offset = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             self.assert_cycle_signals(m, 2, vma=0, ba=0)
             self.assert_cycle_signals(m, 3, vma=0, ba=0)
             self.assert_cycle_signals(m, 4, vma=0, ba=0)
             data = self.assert_cycle_signals(
-                m, 5, address=self.data.pre_x + offset, vma=1, rw=0, ba=0)
+                m, 5, address=self.data.pre_x + offset, vma=1, rw=0, ba=0
+            )
 
             m.d.comb += Assert(data == input)
-            self.assert_registers(m, PC=self.data.pre_pc+2)
+            self.assert_registers(m, PC=self.data.pre_pc + 2)
 
         self.assert_flags(m, Z=(input == 0), N=input[7], V=0)

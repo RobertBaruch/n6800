@@ -115,18 +115,17 @@ class ALU8(Elaboratable):
             with m.Case(ALU8Func.LDCHAIN):
                 m.d.comb += self.output.eq(self.input2)
                 m.d.comb += self._ccs[Flags.Z].eq(
-                    (self.output == 0) & self.ccs[Flags.Z])
+                    (self.output == 0) & self.ccs[Flags.Z]
+                )
                 m.d.comb += self._ccs[Flags.V].eq(0)
 
             with m.Case(ALU8Func.ADD, ALU8Func.ADC):
                 carry_in = Mux(self.func == ALU8Func.ADD, 0, self.ccs[Flags.C])
 
                 sum0_3 = Cat(self.output[:4], carry4)
-                m.d.comb += sum0_3.eq(self.input1[:4] +
-                                      self.input2[:4] + carry_in)
+                m.d.comb += sum0_3.eq(self.input1[:4] + self.input2[:4] + carry_in)
                 sum4_6 = Cat(self.output[4:7], carry7)
-                m.d.comb += sum4_6.eq(self.input1[4:7] +
-                                      self.input2[4:7] + carry4)
+                m.d.comb += sum4_6.eq(self.input1[4:7] + self.input2[4:7] + carry4)
                 sum7 = Cat(self.output[7], carry8)
                 m.d.comb += sum7.eq(self.input1[7] + self.input2[7] + carry7)
                 m.d.comb += overflow.eq(carry7 ^ carry8)
@@ -140,8 +139,7 @@ class ALU8(Elaboratable):
                 carry_in = Mux(self.func != ALU8Func.SBC, 0, self.ccs[Flags.C])
 
                 sum0_6 = Cat(self.output[:7], carry7)
-                m.d.comb += sum0_6.eq(self.input1[:7] +
-                                      ~self.input2[:7] + ~carry_in)
+                m.d.comb += sum0_6.eq(self.input1[:7] + ~self.input2[:7] + ~carry_in)
                 sum7 = Cat(self.output[7], carry8)
                 m.d.comb += sum7.eq(self.input1[7] + ~self.input2[7] + carry7)
                 m.d.comb += overflow.eq(carry7 ^ carry8)
@@ -154,7 +152,8 @@ class ALU8(Elaboratable):
                         m.d.comb += self._ccs[Flags.C].eq(~carry8)
                 with m.Else():
                     m.d.comb += self._ccs[Flags.Z].eq(
-                        (self.output == 0) & self.ccs[Flags.Z])
+                        (self.output == 0) & self.ccs[Flags.Z]
+                    )
 
             with m.Case(ALU8Func.AND):
                 m.d.comb += self.output.eq(self.input1 & self.input2)
@@ -198,11 +197,11 @@ class ALU8(Elaboratable):
                 # COOOOOOOO
                 m.d.comb += [
                     LCat(self._ccs[Flags.C], self.output).eq(
-                        LCat(self.input2, self.ccs[Flags.C])),
+                        LCat(self.input2, self.ccs[Flags.C])
+                    ),
                     self._ccs[Flags.Z].eq(self.output == 0),
                     self._ccs[Flags.N].eq(self.output[7]),
-                    self._ccs[Flags.V].eq(
-                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                    self._ccs[Flags.V].eq(self._ccs[Flags.N] ^ self._ccs[Flags.C]),
                 ]
 
             with m.Case(ALU8Func.ROR):
@@ -210,11 +209,11 @@ class ALU8(Elaboratable):
                 # OOOOOOOOC
                 m.d.comb += [
                     LCat(self.output, self._ccs[Flags.C]).eq(
-                        LCat(self.ccs[Flags.C], self.input2)),
+                        LCat(self.ccs[Flags.C], self.input2)
+                    ),
                     self._ccs[Flags.Z].eq(self.output == 0),
                     self._ccs[Flags.N].eq(self.output[7]),
-                    self._ccs[Flags.V].eq(
-                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                    self._ccs[Flags.V].eq(self._ccs[Flags.N] ^ self._ccs[Flags.C]),
                 ]
 
             with m.Case(ALU8Func.ASL):
@@ -222,11 +221,11 @@ class ALU8(Elaboratable):
                 # COOOOOOOO
                 m.d.comb += [
                     LCat(self._ccs[Flags.C], self.output).eq(
-                        LCat(self.input2, Const(0))),
+                        LCat(self.input2, Const(0))
+                    ),
                     self._ccs[Flags.Z].eq(self.output == 0),
                     self._ccs[Flags.N].eq(self.output[7]),
-                    self._ccs[Flags.V].eq(
-                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                    self._ccs[Flags.V].eq(self._ccs[Flags.N] ^ self._ccs[Flags.C]),
                 ]
 
             with m.Case(ALU8Func.ASR):
@@ -234,11 +233,11 @@ class ALU8(Elaboratable):
                 # OOOOOOOOC
                 m.d.comb += [
                     LCat(self.output, self._ccs[Flags.C]).eq(
-                        LCat(self.input2[7], self.input2)),
+                        LCat(self.input2[7], self.input2)
+                    ),
                     self._ccs[Flags.Z].eq(self.output == 0),
                     self._ccs[Flags.N].eq(self.output[7]),
-                    self._ccs[Flags.V].eq(
-                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                    self._ccs[Flags.V].eq(self._ccs[Flags.N] ^ self._ccs[Flags.C]),
                 ]
 
             with m.Case(ALU8Func.LSR):
@@ -246,11 +245,11 @@ class ALU8(Elaboratable):
                 # OOOOOOOOC
                 m.d.comb += [
                     LCat(self.output, self._ccs[Flags.C]).eq(
-                        LCat(Const(0), self.input2)),
+                        LCat(Const(0), self.input2)
+                    ),
                     self._ccs[Flags.Z].eq(self.output == 0),
                     self._ccs[Flags.N].eq(self.output[7]),
-                    self._ccs[Flags.V].eq(
-                        self._ccs[Flags.N] ^ self._ccs[Flags.C])
+                    self._ccs[Flags.V].eq(self._ccs[Flags.N] ^ self._ccs[Flags.C]),
                 ]
 
             with m.Case(ALU8Func.CLC):
@@ -295,7 +294,11 @@ class ALU8(Elaboratable):
 
                 with m.If(low_ten_or_more | self.ccs[Flags.H]):
                     m.d.comb += adjust[:4].eq(6)
-                with m.If(high_ten_or_more | self.ccs[Flags.C] | (low_ten_or_more & (high == 9))):
+                with m.If(
+                    high_ten_or_more
+                    | self.ccs[Flags.C]
+                    | (low_ten_or_more & (high == 9))
+                ):
                     m.d.comb += adjust[4:].eq(6)
                 sum9 = LCat(carry8, self.output)
 
@@ -341,8 +344,8 @@ if __name__ == "__main__":
                 h = sum5[4]
                 n = sum9[7]
                 c = sum9[8]
-                z = (sum9[:8] == 0)
-                v = (sum8[7] ^ c)
+                z = sum9[:8] == 0
+                v = sum8[7] ^ c
                 m.d.comb += [
                     sum9.eq(alu.input1 + alu.input2 + carry_in),
                     sum8.eq(alu.input1[:7] + alu.input2[:7] + carry_in),
@@ -362,13 +365,12 @@ if __name__ == "__main__":
                     m.d.comb += carry_in.eq(alu.ccs[Flags.C])
                 n = sum9[7]
                 c = ~sum9[8]
-                z = (sum9[:8] == 0)
-                v = (sum8[7] ^ sum9[8])
+                z = sum9[:8] == 0
+                v = sum8[7] ^ sum9[8]
                 m.d.comb += [
                     sum9.eq(alu.input1 + ~alu.input2 + ~carry_in),
                     sum8.eq(alu.input1[:7] + ~alu.input2[:7] + ~carry_in),
-                    Assert(sum9[:8] == (
-                        alu.input1 - alu.input2 - carry_in)[:8]),
+                    Assert(sum9[:8] == (alu.input1 - alu.input2 - carry_in)[:8]),
                     Assert(alu.output == sum9[:8]),
                     Assert(alu._ccs[Flags.N] == n),
                     Assert(alu._ccs[Flags.Z] == z),
@@ -410,5 +412,10 @@ if __name__ == "__main__":
 
         m.d.ph1 += Cover(out_dec == 142)
 
-    main_runner(parser, args, m, ports=alu.input_ports() +
-                alu2.input_ports() + [ph1clk, rst, test_daa])
+    main_runner(
+        parser,
+        args,
+        m,
+        ports=alu.input_ports() + alu2.input_ports() + [ph1clk, rst, test_daa],
+    )
+

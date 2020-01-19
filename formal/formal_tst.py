@@ -29,7 +29,7 @@ class Formal(Alu2Verification):
 
     def check(self, m: Module):
         input, _ = self.common_check(m, store=False)
-        z = (input == 0)
+        z = input == 0
         n = input[7]
         v = 0
         c = 0

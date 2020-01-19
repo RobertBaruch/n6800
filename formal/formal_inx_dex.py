@@ -35,10 +35,8 @@ class Formal(Verification):
         self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
         with m.If(self.instr.matches(INX)):
-            self.assert_registers(m, X=self.data.pre_x +
-                                  1, PC=self.data.pre_pc+1)
+            self.assert_registers(m, X=self.data.pre_x + 1, PC=self.data.pre_pc + 1)
         with m.Else():
-            self.assert_registers(m, X=self.data.pre_x -
-                                  1, PC=self.data.pre_pc+1)
+            self.assert_registers(m, X=self.data.pre_x - 1, PC=self.data.pre_pc + 1)
 
         self.assert_flags(m, Z=(self.data.post_x == 0))

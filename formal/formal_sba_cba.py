@@ -41,8 +41,8 @@ class Formal(Verification):
 
         n = sum9[7]
         c = ~sum9[8]
-        z = (sum9[:8] == 0)
-        v = (sum8[7] ^ sum9[8])
+        z = sum9[:8] == 0
+        v = sum8[7] ^ sum9[8]
 
         m.d.comb += carry_in.eq(0)
 
@@ -51,8 +51,8 @@ class Formal(Verification):
             sum8.eq(input1[:7] + ~input2[:7] + ~carry_in),
         ]
         with m.If(self.instr.matches(SBA)):
-            self.assert_registers(m, A=sum9, PC=self.data.pre_pc+1)
+            self.assert_registers(m, A=sum9, PC=self.data.pre_pc + 1)
         with m.Else():
-            self.assert_registers(m, PC=self.data.pre_pc+1)
+            self.assert_registers(m, PC=self.data.pre_pc + 1)
 
         self.assert_flags(m, Z=z, N=n, V=v, C=c)

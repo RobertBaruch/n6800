@@ -34,15 +34,18 @@ class Formal(Verification):
         with m.If(mode == ModeBits.EXTENDED.value):
             self.assert_cycles(m, 3)
             addr_hi = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             addr_lo = self.assert_cycle_signals(
-                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+                m, 2, address=self.data.pre_pc + 2, vma=1, rw=1, ba=0
+            )
             self.assert_registers(m, PC=LCat(addr_hi, addr_lo))
 
         with m.If(mode == ModeBits.INDEXED.value):
             self.assert_cycles(m, 4)
             offset = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             self.assert_cycle_signals(m, 2, vma=0, ba=0)
             self.assert_cycle_signals(m, 3, vma=0, ba=0)
             self.assert_registers(m, PC=self.data.pre_x + offset)

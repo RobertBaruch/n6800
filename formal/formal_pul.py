@@ -31,17 +31,19 @@ class Formal(Verification):
         pull_a = self.instr[0] == 0
 
         self.assert_cycles(m, 4)
-        self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0)
         self.assert_cycle_signals(m, 2, vma=0, ba=0)
         data = self.assert_cycle_signals(
-            m, 3, address=self.data.pre_sp+1, vma=1, rw=1, ba=0)
+            m, 3, address=self.data.pre_sp + 1, vma=1, rw=1, ba=0
+        )
 
         with m.If(pull_a):
             self.assert_registers(
-                m, A=data, SP=self.data.pre_sp+1, PC=self.data.pre_pc+1)
+                m, A=data, SP=self.data.pre_sp + 1, PC=self.data.pre_pc + 1
+            )
         with m.Else():
             self.assert_registers(
-                m, B=data, SP=self.data.pre_sp+1, PC=self.data.pre_pc+1)
+                m, B=data, SP=self.data.pre_sp + 1, PC=self.data.pre_pc + 1
+            )
 
         self.assert_flags(m)

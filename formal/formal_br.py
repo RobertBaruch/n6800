@@ -24,6 +24,7 @@ from consts.consts import Flags
 
 class Branch(IntEnum):
     """Encodings for the low 4 bits of branch instructions."""
+
     A = 0x0
     N = 0x1
     HI = 0x2
@@ -52,7 +53,8 @@ class Formal(Verification):
     def check(self, m: Module):
         self.assert_cycles(m, 4)
         data = self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+        )
         self.assert_cycle_signals(m, 2, vma=0, ba=0)
         self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
@@ -63,26 +65,29 @@ class Formal(Verification):
         offset = Signal(signed(8))
         br = self.instr[:4]
 
-        take_branch = Array([
-            Const(1),
-            Const(0),
-            (c | z) == 0,
-            (c | z) == 1,
-            c == 0,
-            c == 1,
-            z == 0,
-            z == 1,
-            v == 0,
-            v == 1,
-            n == 0,
-            n == 1,
-            (n ^ v) == 0,
-            (n ^ v) == 1,
-            (z | (n ^ v)) == 0,
-            (z | (n ^ v)) == 1,
-        ])
+        take_branch = Array(
+            [
+                Const(1),
+                Const(0),
+                (c | z) == 0,
+                (c | z) == 1,
+                c == 0,
+                c == 1,
+                z == 0,
+                z == 1,
+                v == 0,
+                v == 1,
+                n == 0,
+                n == 1,
+                (n ^ v) == 0,
+                (n ^ v) == 1,
+                (z | (n ^ v)) == 0,
+                (z | (n ^ v)) == 1,
+            ]
+        )
         m.d.comb += offset.eq(data)
-        target = Mux(take_branch[br], self.data.pre_pc +
-                     2 + offset, self.data.pre_pc + 2)
+        target = Mux(
+            take_branch[br], self.data.pre_pc + 2 + offset, self.data.pre_pc + 2
+        )
         self.assert_registers(m, PC=target)
         self.assert_flags(m)

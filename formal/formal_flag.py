@@ -59,5 +59,5 @@ class Formal(Verification):
             with m.Case(SEI):
                 m.d.comb += i.eq(1)
 
-        self.assert_registers(m, PC=self.data.pre_pc+1)
+        self.assert_registers(m, PC=self.data.pre_pc + 1)
         self.assert_flags(m, V=v, C=c, I=i)

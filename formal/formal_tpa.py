@@ -29,5 +29,6 @@ class Formal(Verification):
     def check(self, m: Module):
         self.assert_cycles(m, 2)
         self.assert_registers(
-            m, A=(0b11000000 | self.data.pre_ccs), PC=self.data.pre_pc+1)
+            m, A=(0b11000000 | self.data.pre_ccs), PC=self.data.pre_pc + 1
+        )
         self.assert_flags(m)

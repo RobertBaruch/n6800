@@ -38,8 +38,8 @@ class Formal(Verification):
         h = sum5[4]
         n = sum9[7]
         c = sum9[8]
-        z = (sum9[:8] == 0)
-        v = (sum8[7] ^ c)
+        z = sum9[:8] == 0
+        v = sum8[7] ^ c
 
         m.d.comb += carry_in.eq(0)
 
@@ -49,5 +49,5 @@ class Formal(Verification):
             sum5.eq(input1[:4] + input2[:4] + carry_in),
         ]
         self.assert_cycles(m, 2)
-        self.assert_registers(m, A=sum9, PC=self.data.pre_pc+1)
+        self.assert_registers(m, A=sum9, PC=self.data.pre_pc + 1)
         self.assert_flags(m, Z=z, N=n, V=v, C=c, H=h)

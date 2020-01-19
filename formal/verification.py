@@ -34,16 +34,21 @@ def LCat(*args) -> Value:
 
 class CycleSignals(Record):
     def __init__(self, name: str = None):
-        super().__init__(Layout([
-            ("address", unsigned(16)),
-            ("data_in", unsigned(8)),
-            ("data_out", unsigned(8)),
-            ("rw", unsigned(1)),
-            ("vma", unsigned(1)),
-            ("ba", unsigned(1)),
-            ("nmi", unsigned(1)),
-            ("irq", unsigned(1)),
-        ]), name=name)
+        super().__init__(
+            Layout(
+                [
+                    ("address", unsigned(16)),
+                    ("data_in", unsigned(8)),
+                    ("data_out", unsigned(8)),
+                    ("rw", unsigned(1)),
+                    ("vma", unsigned(1)),
+                    ("ba", unsigned(1)),
+                    ("nmi", unsigned(1)),
+                    ("irq", unsigned(1)),
+                ]
+            ),
+            name=name,
+        )
 
 
 class Verification(object):
@@ -55,13 +60,12 @@ class Verification(object):
         self.want_sp = Signal(16, name="want_sp")
         self.want_pc = Signal(16, name="want_pc")
         self.want_flags = Signal(8, name="want_flags")
-        self.want_signals = Array([CycleSignals(name=f"want_{i}_")
-                                   for i in range(16)])
+        self.want_signals = Array([CycleSignals(name=f"want_{i}_") for i in range(16)])
 
     def valid(self, instr: Value) -> Value:
         pass
 
-    def verify(self, m: Module, instr: Value, data: 'FormalData'):
+    def verify(self, m: Module, instr: Value, data: "FormalData"):
         self.data = data
         self.instr = instr
         self.check(m)
@@ -73,8 +77,15 @@ class Verification(object):
         m.d.comb += self.want_cycles.eq(cycles)
         m.d.comb += Assert(self.data.cycle == self.want_cycles)
 
-    def assert_cycle_signals(self, m: Module, cycle: int, vma: int, ba: int,
-                             address: Value = None, rw: int = 0) -> Value:
+    def assert_cycle_signals(
+        self,
+        m: Module,
+        cycle: int,
+        vma: int,
+        ba: int,
+        address: Value = None,
+        rw: int = 0,
+    ) -> Value:
         """Asserts that the signals for the given cycle number are as they are expected to be.
 
         Returns the data read or written, which is only valid if a read or write took place.
@@ -106,8 +117,15 @@ class Verification(object):
             return got.data_in if rw == 1 else got.data_out
         return None
 
-    def assert_registers(self, m: Module, A=None, B: Value = None,
-                         X: Value = None, SP: Value = None, PC: Value = None):
+    def assert_registers(
+        self,
+        m: Module,
+        A=None,
+        B: Value = None,
+        X: Value = None,
+        SP: Value = None,
+        PC: Value = None,
+    ):
         if A is not None:
             m.d.comb += self.want_a.eq(A[:8])
         else:
@@ -135,17 +153,18 @@ class Verification(object):
         m.d.comb += Assert(self.data.post_sp == self.want_sp)
         m.d.comb += Assert(self.data.post_pc == self.want_pc)
 
-    def assert_flags(self,
-                     m: Module,
-                     H: Value = None,
-                     I: Value = None,
-                     N: Value = None,
-                     Z: Value = None,
-                     V: Value = None,
-                     C: Value = None):
+    def assert_flags(
+        self,
+        m: Module,
+        H: Value = None,
+        I: Value = None,
+        N: Value = None,
+        Z: Value = None,
+        V: Value = None,
+        C: Value = None,
+    ):
         expectedFlags = Signal(8)
-        m.d.comb += expectedFlags.eq(self.flags(self.data.pre_ccs,
-                                                H, I, N, Z, V, C))
+        m.d.comb += expectedFlags.eq(self.flags(self.data.pre_ccs, H, I, N, Z, V, C))
         m.d.comb += [
             Assert(self.data.post_ccs[7] == expectedFlags[7]),
             Assert(self.data.post_ccs[6] == expectedFlags[6]),
@@ -157,14 +176,16 @@ class Verification(object):
             Assert(self.data.post_ccs[Flags.C] == expectedFlags[Flags.C]),
         ]
 
-    def flags(self,
-              prev: Value,
-              H: Value = None,
-              I: Value = None,
-              N: Value = None,
-              Z: Value = None,
-              V: Value = None,
-              C: Value = None) -> Value:
+    def flags(
+        self,
+        prev: Value,
+        H: Value = None,
+        I: Value = None,
+        N: Value = None,
+        Z: Value = None,
+        V: Value = None,
+        C: Value = None,
+    ) -> Value:
         if H is None:
             H = prev[Flags.H]
         if I is None:
@@ -206,11 +227,22 @@ class FormalData(object):
 
         self.max_cycles = 16
         self.cycle = Signal(range(self.max_cycles), name="record_cycle")
-        self.cycle_records = Array([CycleSignals(name=f"record{i}")
-                                    for i in range(self.max_cycles)])
+        self.cycle_records = Array(
+            [CycleSignals(name=f"record{i}") for i in range(self.max_cycles)]
+        )
 
-    def snapshot_signals(self, m: Module, addr: Value, din: Value, dout: Value,
-                         rw: Value, vma: Value, ba: Value, irq: Value, nmi: Value) -> List[Statement]:
+    def snapshot_signals(
+        self,
+        m: Module,
+        addr: Value,
+        din: Value,
+        dout: Value,
+        rw: Value,
+        vma: Value,
+        ba: Value,
+        irq: Value,
+        nmi: Value,
+    ) -> List[Statement]:
         s = self.cycle_records[self.cycle]
         return [
             s.address.eq(addr),
@@ -224,7 +256,17 @@ class FormalData(object):
             self.cycle.eq(self.cycle + 1),
         ]
 
-    def preSnapshot(self, m: Module, instr: Value, ccs: Value, a: Value, b: Value, x: Value, sp: Value, pc: Value) -> List[Statement]:
+    def preSnapshot(
+        self,
+        m: Module,
+        instr: Value,
+        ccs: Value,
+        a: Value,
+        b: Value,
+        x: Value,
+        sp: Value,
+        pc: Value,
+    ) -> List[Statement]:
         return [
             self.snapshot_taken.eq(1),
             self.instr.eq(instr),
@@ -240,7 +282,9 @@ class FormalData(object):
     def noSnapshot(self, m: Module) -> Statement:
         return self.snapshot_taken.eq(0)
 
-    def postSnapshot(self, m: Module, ccs: Value, a: Value, b: Value, x: Value, sp: Value, pc: Value) -> List[Statement]:
+    def postSnapshot(
+        self, m: Module, ccs: Value, a: Value, b: Value, x: Value, sp: Value, pc: Value
+    ) -> List[Statement]:
         return [
             self.post_ccs.eq(ccs),
             self.post_a.eq(a),

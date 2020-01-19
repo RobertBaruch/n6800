@@ -36,7 +36,7 @@ class Formal(AluVerification):
         v = 0
 
         with m.If(use_a):
-            self.assert_registers(m, A=output, PC=self.data.pre_pc+size)
+            self.assert_registers(m, A=output, PC=self.data.pre_pc + size)
         with m.Else():
-            self.assert_registers(m, B=output, PC=self.data.pre_pc+size)
+            self.assert_registers(m, B=output, PC=self.data.pre_pc + size)
         self.assert_flags(m, Z=z, N=n, V=v)

@@ -35,5 +35,5 @@ class Formal(AluVerification):
         n = flag_output[7]
         v = 0
 
-        self.assert_registers(m, PC=self.data.pre_pc+size)
+        self.assert_registers(m, PC=self.data.pre_pc + size)
         self.assert_flags(m, Z=z, N=n, V=v)

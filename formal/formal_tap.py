@@ -29,12 +29,13 @@ class Formal(Verification):
 
     def check(self, m: Module):
         self.assert_cycles(m, 2)
-        self.assert_registers(m, PC=self.data.pre_pc+1)
-        self.assert_flags(m,
-                          H=self.data.pre_a[Flags.H],
-                          I=self.data.pre_a[Flags.I],
-                          N=self.data.pre_a[Flags.N],
-                          Z=self.data.pre_a[Flags.Z],
-                          V=self.data.pre_a[Flags.V],
-                          C=self.data.pre_a[Flags.C]
-                          )
+        self.assert_registers(m, PC=self.data.pre_pc + 1)
+        self.assert_flags(
+            m,
+            H=self.data.pre_a[Flags.H],
+            I=self.data.pre_a[Flags.I],
+            N=self.data.pre_a[Flags.N],
+            Z=self.data.pre_a[Flags.Z],
+            V=self.data.pre_a[Flags.V],
+            C=self.data.pre_a[Flags.C],
+        )

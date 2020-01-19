@@ -28,14 +28,14 @@ class Formal(Verification):
 
     def check(self, m: Module):
         self.assert_cycles(m, 5)
-        self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0)
         self.assert_cycle_signals(m, 2, vma=0, ba=0)
         addr_hi = self.assert_cycle_signals(
-            m, 3, address=self.data.pre_sp+1, vma=1, rw=1, ba=0)
+            m, 3, address=self.data.pre_sp + 1, vma=1, rw=1, ba=0
+        )
         addr_lo = self.assert_cycle_signals(
-            m, 4, address=self.data.pre_sp+2, vma=1, rw=1, ba=0)
+            m, 4, address=self.data.pre_sp + 2, vma=1, rw=1, ba=0
+        )
 
-        self.assert_registers(m, SP=self.data.pre_sp+2,
-                              PC=LCat(addr_hi, addr_lo))
+        self.assert_registers(m, SP=self.data.pre_sp + 2, PC=LCat(addr_hi, addr_lo))
         self.assert_flags(m)

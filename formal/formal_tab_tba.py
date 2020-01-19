@@ -35,11 +35,11 @@ class Formal(Verification):
         input = Mux(self.instr[0] == 0, self.data.pre_a, self.data.pre_b)
 
         with m.If(self.instr.matches(TAB)):
-            self.assert_registers(m, B=self.data.pre_a, PC=self.data.pre_pc+1)
+            self.assert_registers(m, B=self.data.pre_a, PC=self.data.pre_pc + 1)
         with m.Else():
-            self.assert_registers(m, A=self.data.pre_b, PC=self.data.pre_pc+1)
+            self.assert_registers(m, A=self.data.pre_b, PC=self.data.pre_pc + 1)
 
-        z = (input == 0)
+        z = input == 0
         n = input[7]
         v = 0
 

@@ -68,8 +68,7 @@ class N6800(Elaboratable):
 
         if SLOWCLK:
             clk_freq = platform.default_clk_frequency
-            timer = Signal(range(0, int(clk_freq // 2)),
-                           reset=int(clk_freq // 2) - 1)
+            timer = Signal(range(0, int(clk_freq // 2)), reset=int(clk_freq // 2) - 1)
             tick = Signal()
             sync = ClockDomain()
 
@@ -145,8 +144,9 @@ def Bus(*args, pins, invert=False, conn=None, attrs=None, default_name, dir):
         ios = [Pins(pin, dir=dir, invert=invert, conn=conn)]
         if attrs is not None:
             ios.append(attrs)
-        resources.append(Resource.family(
-            *args, number, default_name=default_name, ios=ios))
+        resources.append(
+            Resource.family(*args, number, default_name=default_name, ios=ios)
+        )
     return resources
 
 
@@ -156,26 +156,45 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
 
     # Resets should be on GBIN0/2/4/6. Clocks may be on any GBIN.
     resources: List[Resource] = [
-        Resource("clk1", 0, Pins("J3", dir="i"), Clock(12e6),
-                 Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN6
-        Resource("clk2", 0, Pins("G1", dir="i"), Clock(12e6),
-                 Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN7
-        Resource("rst", 0, Pins("K9", dir="i"),
-                 Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")),  # GBIN4
-        *Bus(default_name="addr", pins="B1 B2 C1 C2 D1 D2 E2 F1 F2 G2 H1 H2 J2 J1 K3 K1",
-             dir="oe", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
-        *Bus(default_name="data", pins="M3 L5 N3 P1 M4 P2 M5 R1",
-             dir="io", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
-        *Bus(default_name="led", pins="C3 B3 C4 C5 A1 A2 B4 B5",
-             dir="o", attrs=Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("ba", 0, Pins("M1", dir="o"),
-                 Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("rw", 0, Pins("E4", dir="oe"),
-                 Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("n_irq", 0, Pins("L3", dir="i"),
-                 Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("n_nmi", 0, Pins("L1", dir="i"),
-                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource(
+            "clk1",
+            0,
+            Pins("J3", dir="i"),
+            Clock(12e6),
+            Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS"),
+        ),  # GBIN6
+        Resource(
+            "clk2",
+            0,
+            Pins("G1", dir="i"),
+            Clock(12e6),
+            Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS"),
+        ),  # GBIN7
+        Resource(
+            "rst", 0, Pins("K9", dir="i"), Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")
+        ),  # GBIN4
+        *Bus(
+            default_name="addr",
+            pins="B1 B2 C1 C2 D1 D2 E2 F1 F2 G2 H1 H2 J2 J1 K3 K1",
+            dir="oe",
+            attrs=Attrs(IO_STANDARD="SB_LVCMOS"),
+        ),
+        *Bus(
+            default_name="data",
+            pins="M3 L5 N3 P1 M4 P2 M5 R1",
+            dir="io",
+            attrs=Attrs(IO_STANDARD="SB_LVCMOS"),
+        ),
+        *Bus(
+            default_name="led",
+            pins="C3 B3 C4 C5 A1 A2 B4 B5",
+            dir="o",
+            attrs=Attrs(IO_STANDARD="SB_LVCMOS"),
+        ),
+        Resource("ba", 0, Pins("M1", dir="o"), Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("rw", 0, Pins("E4", dir="oe"), Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_irq", 0, Pins("L3", dir="i"), Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_nmi", 0, Pins("L1", dir="i"), Attrs(IO_STANDARD="SB_LVCMOS")),
     ]
 
     default_clk = "clk1"

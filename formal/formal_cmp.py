@@ -34,7 +34,7 @@ class Formal(AluVerification):
         m.d.comb += sinput1.eq(input1)
         m.d.comb += sinput2.eq(input2)
 
-        z = (input1 == input2)
+        z = input1 == input2
         n = (input1 - input2)[7]
 
         # The following is wrong. This would calculate LT (less than), not N.
@@ -45,7 +45,7 @@ class Formal(AluVerification):
         # GE is true if and only if N^V==0 (i.e. N == V).
         ge = sinput1 >= sinput2
         v = Mux(ge, n, ~n)
-        c = (input1 < input2)
+        c = input1 < input2
 
-        self.assert_registers(m, PC=self.data.pre_pc+size)
+        self.assert_registers(m, PC=self.data.pre_pc + size)
         self.assert_flags(m, Z=z, N=n, V=v, C=c)

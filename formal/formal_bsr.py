@@ -32,17 +32,20 @@ class Formal(Verification):
 
         self.assert_cycles(m, 8)
         data = self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+            m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+        )
         self.assert_cycle_signals(m, 2, vma=0, ba=0)
         ret_addr_lo = self.assert_cycle_signals(
-            m, 3, address=self.data.pre_sp, vma=1, rw=0, ba=0)
+            m, 3, address=self.data.pre_sp, vma=1, rw=0, ba=0
+        )
         ret_addr_hi = self.assert_cycle_signals(
-            m, 4, address=self.data.pre_sp-1, vma=1, rw=0, ba=0)
+            m, 4, address=self.data.pre_sp - 1, vma=1, rw=0, ba=0
+        )
         self.assert_cycle_signals(m, 5, vma=0, ba=0)
         self.assert_cycle_signals(m, 6, vma=0, ba=0)
         self.assert_cycle_signals(m, 7, vma=0, ba=0)
         m.d.comb += offset.eq(data)
 
         m.d.comb += Assert(LCat(ret_addr_hi, ret_addr_lo) == ret_addr)
-        self.assert_registers(m, PC=ret_addr + offset, SP=self.data.pre_sp-2)
+        self.assert_registers(m, PC=ret_addr + offset, SP=self.data.pre_sp - 2)
         self.assert_flags(m)

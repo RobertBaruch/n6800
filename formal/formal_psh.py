@@ -31,10 +31,10 @@ class Formal(Verification):
         push_a = self.instr[0] == 0
 
         self.assert_cycles(m, 4)
-        self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0)
         data = self.assert_cycle_signals(
-            m, 2, address=self.data.pre_sp, vma=1, rw=0, ba=0)
+            m, 2, address=self.data.pre_sp, vma=1, rw=0, ba=0
+        )
         self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
         with m.If(push_a):
@@ -42,5 +42,5 @@ class Formal(Verification):
         with m.Else():
             m.d.comb += Assert(data == self.data.pre_b)
 
-        self.assert_registers(m, SP=self.data.pre_sp-1, PC=self.data.pre_pc+1)
+        self.assert_registers(m, SP=self.data.pre_sp - 1, PC=self.data.pre_pc + 1)
         self.assert_flags(m)

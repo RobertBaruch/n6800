@@ -44,45 +44,53 @@ class Formal(Verification):
         # the DAA instruction operation table.
 
         # Conditions are: C before DAA, a condition on hi, H before DAA, a condition on lo.
-        conds = Array([
-            Array([0, hi <= 9, 0, lo <= 9]),
-            Array([0, hi <= 8, 0, lo >= 10]),
-            Array([0, hi <= 9, 1, lo <= 3]),
-            Array([0, hi >= 10, 0, lo <= 9]),
-            Array([0, hi >= 9, 0, lo >= 10]),
-            Array([0, hi >= 10, 1, lo <= 3]),
-            Array([1, hi <= 2, 0, lo <= 9]),
-            Array([1, hi <= 2, 0, lo >= 10]),
-            Array([1, hi <= 3, 1, lo <= 3]),
-        ])
+        conds = Array(
+            [
+                Array([0, hi <= 9, 0, lo <= 9]),
+                Array([0, hi <= 8, 0, lo >= 10]),
+                Array([0, hi <= 9, 1, lo <= 3]),
+                Array([0, hi >= 10, 0, lo <= 9]),
+                Array([0, hi >= 9, 0, lo >= 10]),
+                Array([0, hi >= 10, 1, lo <= 3]),
+                Array([1, hi <= 2, 0, lo <= 9]),
+                Array([1, hi <= 2, 0, lo >= 10]),
+                Array([1, hi <= 3, 1, lo <= 3]),
+            ]
+        )
 
         # Results are: DAA adjustment, state of C after DAA
-        results = Array([
-            Array([0, 0]),
-            Array([6, 0]),
-            Array([6, 0]),
-            Array([0x60, 1]),
-            Array([0x66, 1]),
-            Array([0x66, 1]),
-            Array([0x60, 1]),
-            Array([0x66, 1]),
-            Array([0x66, 1]),
-        ])
+        results = Array(
+            [
+                Array([0, 0]),
+                Array([6, 0]),
+                Array([6, 0]),
+                Array([0x60, 1]),
+                Array([0x66, 1]),
+                Array([0x66, 1]),
+                Array([0x60, 1]),
+                Array([0x66, 1]),
+                Array([0x66, 1]),
+            ]
+        )
 
         input_is_valid = Signal()
         expected_output = Signal(8)
         expected_c = Signal()
 
         for i in range(len(conds)):
-            with m.If((pre_c == conds[i][0]) & conds[i][1] & (pre_h == conds[i][2]) & conds[i][3]):
+            with m.If(
+                (pre_c == conds[i][0])
+                & conds[i][1]
+                & (pre_h == conds[i][2])
+                & conds[i][3]
+            ):
                 m.d.comb += input_is_valid.eq(1)
                 m.d.comb += expected_output.eq(input1 + results[i][0])
                 m.d.comb += expected_c.eq(results[i][1])
 
-        z = (expected_output == 0)
+        z = expected_output == 0
         n = expected_output[7]
 
         with m.If(input_is_valid):
-            self.assert_registers(m, A=expected_output,
-                                  PC=self.data.pre_pc + 1)
+            self.assert_registers(m, A=expected_output, PC=self.data.pre_pc + 1)
             self.assert_flags(m, Z=z, N=n, C=expected_c)

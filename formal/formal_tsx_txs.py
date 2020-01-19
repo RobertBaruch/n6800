@@ -32,14 +32,13 @@ class Formal(Verification):
 
     def check(self, m: Module):
         self.assert_cycles(m, 4)
-        self.assert_cycle_signals(
-            m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+        self.assert_cycle_signals(m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0)
         self.assert_cycle_signals(m, 2, vma=0, ba=0)
         self.assert_cycle_signals(m, 3, vma=0, ba=0)
 
         with m.If(self.instr.matches(TSX)):
-            self.assert_registers(m, X=self.data.pre_sp, PC=self.data.pre_pc+1)
+            self.assert_registers(m, X=self.data.pre_sp, PC=self.data.pre_pc + 1)
         with m.Else():
-            self.assert_registers(m, SP=self.data.pre_x, PC=self.data.pre_pc+1)
+            self.assert_registers(m, SP=self.data.pre_x, PC=self.data.pre_pc + 1)
 
         self.assert_flags(m)

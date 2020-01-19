@@ -29,60 +29,72 @@ class Formal(Verification):
 
     def check(self, m: Module):
         mode = self.instr[4:6]
-        use_sp = (self.instr[6] == 0)
+        use_sp = self.instr[6] == 0
         data = Signal(16)
         size = Signal(4)
 
         with m.If(mode == ModeBits.DIRECT):
             self.assert_cycles(m, 4)
             addr_lo = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             data_hi = self.assert_cycle_signals(
-                m, 2, address=addr_lo, vma=1, rw=1, ba=0)
+                m, 2, address=addr_lo, vma=1, rw=1, ba=0
+            )
             data_lo = self.assert_cycle_signals(
-                m, 3, address=addr_lo+1, vma=1, rw=1, ba=0)
+                m, 3, address=addr_lo + 1, vma=1, rw=1, ba=0
+            )
             m.d.comb += data.eq(LCat(data_hi, data_lo))
             m.d.comb += size.eq(2)
 
         with m.Elif(mode == ModeBits.EXTENDED):
             self.assert_cycles(m, 5)
             addr_hi = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             addr_lo = self.assert_cycle_signals(
-                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+                m, 2, address=self.data.pre_pc + 2, vma=1, rw=1, ba=0
+            )
             data_hi = self.assert_cycle_signals(
-                m, 3, address=LCat(addr_hi, addr_lo), vma=1, rw=1, ba=0)
+                m, 3, address=LCat(addr_hi, addr_lo), vma=1, rw=1, ba=0
+            )
             data_lo = self.assert_cycle_signals(
-                m, 4, address=LCat(addr_hi, addr_lo)+1, vma=1, rw=1, ba=0)
+                m, 4, address=LCat(addr_hi, addr_lo) + 1, vma=1, rw=1, ba=0
+            )
             m.d.comb += data.eq(LCat(data_hi, data_lo))
             m.d.comb += size.eq(3)
 
         with m.Elif(mode == ModeBits.IMMEDIATE):
             self.assert_cycles(m, 3)
             data_hi = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             data_lo = self.assert_cycle_signals(
-                m, 2, address=self.data.pre_pc+2, vma=1, rw=1, ba=0)
+                m, 2, address=self.data.pre_pc + 2, vma=1, rw=1, ba=0
+            )
             m.d.comb += data.eq(LCat(data_hi, data_lo))
             m.d.comb += size.eq(3)
 
         with m.Else():
             self.assert_cycles(m, 6)
             offset = self.assert_cycle_signals(
-                m, 1, address=self.data.pre_pc+1, vma=1, rw=1, ba=0)
+                m, 1, address=self.data.pre_pc + 1, vma=1, rw=1, ba=0
+            )
             self.assert_cycle_signals(m, 2, vma=0, ba=0)
             self.assert_cycle_signals(m, 3, vma=0, ba=0)
             data_hi = self.assert_cycle_signals(
-                m, 4, address=self.data.pre_x+offset, vma=1, rw=1, ba=0)
+                m, 4, address=self.data.pre_x + offset, vma=1, rw=1, ba=0
+            )
             data_lo = self.assert_cycle_signals(
-                m, 5, address=self.data.pre_x+offset+1, vma=1, rw=1, ba=0)
+                m, 5, address=self.data.pre_x + offset + 1, vma=1, rw=1, ba=0
+            )
             m.d.comb += data.eq(LCat(data_hi, data_lo))
             m.d.comb += size.eq(2)
 
-        z = (data == 0)
+        z = data == 0
         n = data[15]
         with m.If(use_sp):
-            self.assert_registers(m, SP=data, PC=self.data.pre_pc+size)
+            self.assert_registers(m, SP=data, PC=self.data.pre_pc + size)
         with m.Else():
-            self.assert_registers(m, X=data, PC=self.data.pre_pc+size)
+            self.assert_registers(m, X=data, PC=self.data.pre_pc + size)
         self.assert_flags(m, V=0, Z=z, N=n)

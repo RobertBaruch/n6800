@@ -28,8 +28,9 @@ def Downto(v: Value, top: int, bottom: int) -> Value:
     """
     if bottom > top:
         raise IndexError(
-            f"Downto top must be greater than or equal to bottom: {top}, {bottom}")
-    return v[bottom:top+1]
+            f"Downto top must be greater than or equal to bottom: {top}, {bottom}"
+        )
+    return v[bottom : top + 1]
 
 
 ROL = "01--1001"
@@ -95,6 +96,6 @@ class Formal(Alu2Verification):
 
         m.d.comb += Assert(expected_output == actual_output)
         n = expected_output[7]
-        z = (expected_output == 0)
+        z = expected_output == 0
         v = n ^ c
         self.assert_flags(m, Z=z, N=n, V=v, C=c)
