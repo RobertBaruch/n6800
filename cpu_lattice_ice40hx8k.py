@@ -68,7 +68,8 @@ class N6800(Elaboratable):
 
         if SLOWCLK:
             clk_freq = platform.default_clk_frequency
-            timer = Signal(range(0, int(clk_freq // 2)), reset=int(clk_freq // 2) - 1)
+            timer = Signal(range(0, int(clk_freq // 2)),
+                           reset=int(clk_freq // 2) - 1)
             tick = Signal()
             sync = ClockDomain()
 
@@ -171,7 +172,8 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
             Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS"),
         ),  # GBIN7
         Resource(
-            "rst", 0, Pins("K9", dir="i"), Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")
+            "rst", 0, Pins("K9", dir="i"), Attrs(
+                GLOBAL=True, IO_STANDARD="SB_LVCMOS")
         ),  # GBIN4
         *Bus(
             default_name="addr",
@@ -192,9 +194,12 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
             attrs=Attrs(IO_STANDARD="SB_LVCMOS"),
         ),
         Resource("ba", 0, Pins("M1", dir="o"), Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("rw", 0, Pins("E4", dir="oe"), Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("n_irq", 0, Pins("L3", dir="i"), Attrs(IO_STANDARD="SB_LVCMOS")),
-        Resource("n_nmi", 0, Pins("L1", dir="i"), Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("rw", 0, Pins("E4", dir="oe"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_irq", 0, Pins("L3", dir="i"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
+        Resource("n_nmi", 0, Pins("L1", dir="i"),
+                 Attrs(IO_STANDARD="SB_LVCMOS")),
     ]
 
     default_clk = "clk1"

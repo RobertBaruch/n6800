@@ -24,7 +24,10 @@ depth 24
 multiclock off
 
 [engines]
-smtbmc boolector
+# Choose one of these lines by timing each one.
+# smtbmc boolector 
+smtbmc --syn z3 rewriter.cache_all=true opt.enable_sat=true
+# smtbmc --syn yices
 
 [script]
 read_ilang rel_file.il

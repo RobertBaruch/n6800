@@ -48,11 +48,14 @@ formal/sby/%_bmc/PASS: formal/sby/%.sby
 	fi
 
 formal/sby/%.sby: formal/sby/%.il formal/formal.sby
-	mkdir -p formal/sby
 	cat formal/formal.sby | sed --expression='s#rel_file#$*#g' | sed --expression='s#abs_file#formal/sby/$*#g' > $@
 
 formal/sby/%.il: formal/formal_%.py core.py
+	$(info $(shell date '+%d %b %Y %H:%M:%S') Compiling instruction '$*'...)
+	mkdir -p formal/sby
 	python3 core.py --insn $* generate -t il > $@
 
 formal/sby/alu8.il: alu8.py
+	$(info $(shell date '+%d %b %Y %H:%M:%S') Compiling alu...)
+	mkdir -p formal/sby
 	python3 alu8.py generate -t il > $@

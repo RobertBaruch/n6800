@@ -30,7 +30,7 @@ from formal.verification import FormalData, Verification
 from alu8 import ALU8Func, ALU8, LCat
 from consts.consts import ModeBits, Flags
 
-from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux, signed
+from nmigen import Signal, Value, Elaboratable, Module, Cat, Const, Mux, signed, Repl
 from nmigen import ClockDomain, ClockSignal
 from nmigen.hdl.ast import Statement
 from nmigen.asserts import Assert, Past, Cover, Assume
@@ -76,9 +76,6 @@ class Core(Elaboratable):
     """The core of the CPU. There is another layer which
     handles I/O for the actual pins."""
 
-    reg8_map: Dict[IntEnum, Tuple[Signal, bool]]
-    reg16_map: Dict[IntEnum, Tuple[Signal, bool]]
-
     def __init__(self, verification: Verification = None):
         # outputs
         self.Addr = Signal(16)
@@ -99,7 +96,6 @@ class Core(Elaboratable):
         self.sp = Signal(16, reset_less=True)
         self.pc = Signal(16, reset_less=True)
         self.instr = Signal(8, reset_less=True)
-        self.tmp8 = Signal(8, reset_less=True)
         self.tmp16 = Signal(16, reset_less=True)
 
         # busses
@@ -108,37 +104,8 @@ class Core(Elaboratable):
         self.alu8 = Signal(8)  # Output from the ALU
         self.ccs = Signal(8)  # Flags from the ALU
 
-        # selectors for busses
-        self.src8_1_select = Signal(Reg8)
-        self.src8_2_select = Signal(Reg8)
-
         # function control
         self.alu8_func = Signal(ALU8Func)
-
-        # mappings of selectors to signals. The second tuple element is
-        # whether the register is read/write.
-        self.reg8_map = {
-            Reg8.A: (self.a, True),
-            Reg8.B: (self.b, True),
-            Reg8.XH: (self.x[8:], True),
-            Reg8.XL: (self.x[:8], True),
-            Reg8.SPH: (self.sp[8:], True),
-            Reg8.SPL: (self.sp[:8], True),
-            Reg8.PCH: (self.pc[8:], True),
-            Reg8.PCL: (self.pc[:8], True),
-            Reg8.TMP8: (self.tmp8, True),
-            Reg8.TMP16H: (self.tmp16[8:], True),
-            Reg8.TMP16L: (self.tmp16[:8], True),
-            Reg8.DIN: (self.Din, False),  # read-only register
-            Reg8.DOUT: (self.Dout, True),
-        }
-        self.reg16_map = {
-            Reg16.X: (self.x, True),
-            Reg16.SP: (self.sp, True),
-            Reg16.PC: (self.pc, True),
-            Reg16.TMP16: (self.tmp16, True),
-            Reg16.ADDR: (self.Addr, True),
-        }
 
         # internal state
         self.reset_state = Signal(2)  # where we are during reset
@@ -177,8 +144,6 @@ class Core(Elaboratable):
 
         # defaults
         m.d.comb += self.end_instr_flag.eq(0)
-        m.d.comb += self.src8_1_select.eq(Reg8.NONE)
-        m.d.comb += self.src8_2_select.eq(Reg8.NONE)
         m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
         m.d.comb += self.wai.eq(0)
         m.d.ph1 += self.VMA.eq(1)
@@ -187,9 +152,6 @@ class Core(Elaboratable):
 
         # some common instruction decoding
         m.d.comb += self.mode.eq(self.instr[4:6])
-
-        self.src_bus_setup(m, self.reg8_map, self.src8_1, self.src8_1_select)
-        self.src_bus_setup(m, self.reg8_map, self.src8_2, self.src8_2_select)
 
         m.d.comb += alu.input1.eq(self.src8_1)
         m.d.comb += alu.input2.eq(self.src8_2)
@@ -210,32 +172,6 @@ class Core(Elaboratable):
 
         return m
 
-    def src_bus_setup(
-        self,
-        m: Module,
-        reg_map: Dict[IntEnum, Tuple[Signal, bool]],
-        bus: Signal,
-        selector: Signal,
-    ):
-        with m.Switch(selector):
-            for e, reg in reg_map.items():
-                with m.Case(e):
-                    m.d.comb += bus.eq(reg[0])
-            with m.Default():
-                m.d.comb += bus.eq(0)
-
-    def dest_bus_setup(
-        self,
-        m: Module,
-        reg_map: Dict[IntEnum, Tuple[Signal, bool]],
-        bus: Signal,
-        bitmap: Signal,
-    ):
-        for e, reg in reg_map.items():
-            if reg[1]:
-                with m.If(bitmap[e.value]):
-                    m.d.ph1 += reg[0].eq(bus)
-
     def reset_handler(self, m: Module):
         """Generates logic for reading the reset vector at 0xFFFE
         and jumping there."""
@@ -245,13 +181,13 @@ class Core(Elaboratable):
                 m.d.ph1 += self.RW.eq(1)
                 m.d.ph1 += self.reset_state.eq(1)
             with m.Case(1):
-                m.d.ph1 += self.Addr.eq(0xFFFF)
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
                 m.d.ph1 += self.RW.eq(1)
-                m.d.ph1 += self.tmp8.eq(self.Din)
+                m.d.ph1 += self.tmp16[8:].eq(self.Din)
                 m.d.ph1 += self.reset_state.eq(2)
             with m.Case(2):
                 m.d.ph1 += self.reset_state.eq(3)
-                reset_vec = Cat(self.Din, self.tmp8)
+                reset_vec = LCat(self.tmp16[8:], self.Din)
                 self.end_instr(m, reset_vec)
 
     def end_instr_flag_handler(self, m: Module):
@@ -332,25 +268,25 @@ class Core(Elaboratable):
 
             with m.Case(6):
                 m.d.ph1 += self.Addr.eq(self.Addr - 1)
-                m.d.ph1 += self.sp.eq(self.Addr - 1)
                 m.d.ph1 += self.VMA.eq(0)
                 m.d.ph1 += self.RW.eq(1)
 
             with m.Case(7):
+                m.d.ph1 += self.sp.eq(self.Addr)
                 m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
                 m.d.ph1 += self.Addr.eq(0xFFF8 | (self.interrupt_vec << 1))
                 m.d.ph1 += self.VMA.eq(1)
                 m.d.ph1 += self.RW.eq(1)
 
             with m.Case(8):
-                m.d.ph1 += self.tmp8.eq(self.Din)
+                m.d.ph1 += self.tmp16[8:].eq(self.Din)
                 m.d.ph1 += self.Addr.eq(self.Addr + 1)
                 m.d.ph1 += self.VMA.eq(1)
                 m.d.ph1 += self.RW.eq(1)
 
             with m.Case(9):
                 m.d.ph1 += self.interrupt.eq(0)
-                self.end_instr(m, LCat(self.tmp8, self.Din))
+                self.end_instr(m, LCat(self.tmp16[8:], self.Din))
 
     def fetch(self, m: Module):
         """Fetch the opcode at PC, which should already be on the address lines.
@@ -359,7 +295,7 @@ class Core(Elaboratable):
         m.d.ph1 += self.instr.eq(self.Din)
         m.d.ph1 += self.RW.eq(1)
         m.d.ph1 += self.pc.eq(self.pc + 1)
-        m.d.ph1 += self.Addr.eq(self.pc + 1)
+        m.d.ph1 += self.Addr.eq(self.Addr + 1)
 
     def maybe_do_formal_verification(self, m: Module):
         """If formal verification is enabled, take pre- and post-snapshots, and do asserts.
@@ -410,7 +346,8 @@ class Core(Elaboratable):
                 )
 
     def execute(self, m: Module):
-        """Execute the instruction in the instr register."""
+        """Executes the instruction in the instr register.
+        """
         with m.Switch(self.instr):
             with m.Case("00000001"):  # NOP
                 self.NOP(m)
@@ -452,6 +389,7 @@ class Core(Elaboratable):
                 self.WAI(m)
             with m.Case("00111111"):  # SWI
                 self.SWI(m)
+
             with m.Case("01--0000"):  # NEG
                 self.ALU2(m, ALU8Func.SUB, 0, 1)
             with m.Case("01--0011"):  # COM
@@ -472,32 +410,32 @@ class Core(Elaboratable):
                 self.ALU2(m, ALU8Func.INC, 0, 1)
             with m.Case("01--1101"):  # TST
                 self.ALU2(m, ALU8Func.SUB, 1, 0, store=False)
-            with m.Case("011-1110"):  # JMP
-                self.JMP(m)
             with m.Case("01--1111"):  # CLR
                 self.ALU2(m, ALU8Func.SUB, 1, 1)
+
+            with m.Case("011-1110"):  # JMP
+                self.JMP(m)
             with m.Case("10--1100"):  # CPX
-                self.CPX(m)
+                self.CPX(m) # 120 LUTS
             with m.Case("10001101"):  # BSR
-                self.BSR(m)
+                self.JSR_BSR(m) # 130 LUTS
             with m.Case("1---1110"):  # LDS, LDX
-                self.LDS_LDX(m)
+                self.LDS_LDX(m) # 120 LUTS
             with m.Case("1-011111", "1-1-1111"):  # STS, STX
                 self.STS_STX(m)
+
             with m.Case("1---0110"):  # LDA
                 self.ALU(m, ALU8Func.LD)
             with m.Case("1---0000"):  # SUB
                 self.ALU(m, ALU8Func.SUB)
             with m.Case("1---0001"):  # CMP
-                self.ALU(m, ALU8Func.SUB, store=False)
+                self.ALU(m, ALU8Func.SUB)
             with m.Case("1---0010"):  # SBC
                 self.ALU(m, ALU8Func.SBC)
             with m.Case("1---0100"):  # AND
                 self.ALU(m, ALU8Func.AND)
             with m.Case("1---0101"):  # BIT
-                self.ALU(m, ALU8Func.AND, store=False)
-            with m.Case("1--10111", "1-100111"):  # STA
-                self.STA(m)
+                self.ALU(m, ALU8Func.AND)
             with m.Case("1---1000"):  # EOR
                 self.ALU(m, ALU8Func.EOR)
             with m.Case("1---1001"):  # ADC
@@ -506,50 +444,31 @@ class Core(Elaboratable):
                 self.ALU(m, ALU8Func.ORA)
             with m.Case("1---1011"):  # ADD
                 self.ALU(m, ALU8Func.ADD)
+
+            with m.Case("1--10111", "1-100111"):  # STA
+                self.STA(m)
             with m.Case("101-1101"):  # JSR
-                self.JSR(m)
+                self.JSR_BSR(m)
             with m.Default():  # Illegal
                 self.end_instr(m, self.pc)
 
-    def read_byte(
-        self,
-        m: Module,
-        cycle: int,
-        addr: Statement,
-        comb_dest: Signal = None,
-        sync_dest: Signal = None,
-    ):
-        """Reads a byte starting from the given cycle.
-
-        The address lines are output with the address during cycle+1. At some point during
-        cycle+1, Din will contain the data in.
-
-        If comb_dest is not None, then comb_dest is also set to Din for cycle+1.
-
-        If sync_dest is not None, then Din is stored in sync_dest at the end of cycle+1.
-        """
-        with m.If(self.cycle == cycle):
-            m.d.ph1 += self.Addr.eq(addr)
-            m.d.ph1 += self.RW.eq(1)
-            m.d.ph1 += self.VMA.eq(1)
-
-        with m.If(self.cycle == cycle + 1):
-            if comb_dest is not None:
-                m.d.comb += comb_dest.eq(self.Din)
-            if sync_dest is not None:
-                m.d.ph1 += sync_dest.eq(self.Din)
-
-    def ALU(self, m: Module, func: ALU8Func, store: bool = True):
+    def ALU(self, m: Module, func: ALU8Func):
         b = self.instr[6]
+        store = ~self.instr[:4].matches("0001", "0101") # CMP and BIT don't store.
 
         with m.If(self.mode == ModeBits.DIRECT.value):
             operand = self.mode_direct(m)
-            self.read_byte(m, cycle=1, addr=operand, comb_dest=self.src8_2)
+
+            with m.If(self.cycle == 1):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+                m.d.ph1 += self.VMA.eq(1)
 
             with m.If(self.cycle == 2):
                 m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.src8_2.eq(self.Din)
                 m.d.comb += self.alu8_func.eq(func)
-                if store:
+                with m.If(store):
                     with m.If(b):
                         m.d.ph1 += self.b.eq(self.alu8)
                     with m.Else():
@@ -558,12 +477,17 @@ class Core(Elaboratable):
 
         with m.Elif(self.mode == ModeBits.EXTENDED.value):
             operand = self.mode_ext(m)
-            self.read_byte(m, cycle=2, addr=operand, comb_dest=self.src8_2)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+                m.d.ph1 += self.VMA.eq(1)
 
             with m.If(self.cycle == 3):
                 m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.src8_2.eq(self.Din)
                 m.d.comb += self.alu8_func.eq(func)
-                if store:
+                with m.If(store):
                     with m.If(b):
                         m.d.ph1 += self.b.eq(self.alu8)
                     with m.Else():
@@ -577,7 +501,7 @@ class Core(Elaboratable):
                 m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
                 m.d.comb += self.src8_2.eq(operand)
                 m.d.comb += self.alu8_func.eq(func)
-                if store:
+                with m.If(store):
                     with m.If(b):
                         m.d.ph1 += self.b.eq(self.alu8)
                     with m.Else():
@@ -586,12 +510,17 @@ class Core(Elaboratable):
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
             operand = self.mode_indexed(m)
-            self.read_byte(m, cycle=3, addr=operand, comb_dest=self.src8_2)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+                m.d.ph1 += self.VMA.eq(1)
 
             with m.If(self.cycle == 4):
                 m.d.comb += self.src8_1.eq(Mux(b, self.b, self.a))
+                m.d.comb += self.src8_2.eq(self.Din)
                 m.d.comb += self.alu8_func.eq(func)
-                if store:
+                with m.If(store):
                     with m.If(b):
                         m.d.ph1 += self.b.eq(self.alu8)
                     with m.Else():
@@ -624,22 +553,27 @@ class Core(Elaboratable):
 
         with m.Elif(self.mode == ModeBits.EXTENDED.value):
             operand = self.mode_ext(m)
-            self.read_byte(m, cycle=2, addr=operand, comb_dest=None)
+
+            with m.If(self.cycle == 2):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+                m.d.ph1 += self.VMA.eq(1)
 
             with m.If(self.cycle == 3):
                 m.d.comb += self.src8_1.eq(Mux(operand1, self.Din, 0))
                 m.d.comb += self.src8_2.eq(Mux(operand2, self.Din, 0))
                 m.d.comb += self.alu8_func.eq(func)
-                # Output during cycle 4:
-                m.d.ph1 += self.tmp8.eq(self.alu8)
+
+                m.d.ph1 += self.tmp16[8:].eq(self.alu8)
                 m.d.ph1 += self.VMA.eq(0)
-                m.d.ph1 += self.Addr.eq(operand)
+                # Important! save tmp16 to Addr, because we're overwriting
+                # its high byte from the ALU result!
+                m.d.ph1 += self.Addr.eq(operand) 
                 m.d.ph1 += self.RW.eq(1)
 
             with m.Elif(self.cycle == 4):
-                # Output during cycle 5:
-                m.d.ph1 += self.Addr.eq(operand)
-                m.d.ph1 += self.Dout.eq(self.tmp8)
+                m.d.ph1 += self.Addr.eq(self.Addr)
+                m.d.ph1 += self.Dout.eq(self.tmp16[8:])
                 m.d.ph1 += self.RW.eq(0)
                 if not store:
                     m.d.ph1 += self.VMA.eq(0)
@@ -649,22 +583,27 @@ class Core(Elaboratable):
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
             operand = self.mode_indexed(m)
-            self.read_byte(m, cycle=3, addr=operand, comb_dest=None)
+
+            with m.If(self.cycle == 3):
+                m.d.ph1 += self.Addr.eq(operand)
+                m.d.ph1 += self.RW.eq(1)
+                m.d.ph1 += self.VMA.eq(1)
 
             with m.If(self.cycle == 4):
                 m.d.comb += self.src8_1.eq(Mux(operand1, self.Din, 0))
                 m.d.comb += self.src8_2.eq(Mux(operand2, self.Din, 0))
                 m.d.comb += self.alu8_func.eq(func)
-                # Output during cycle 5:
-                m.d.ph1 += self.tmp8.eq(self.alu8)
+
+                m.d.ph1 += self.tmp16[8:].eq(self.alu8)
                 m.d.ph1 += self.VMA.eq(0)
+                # Important! save tmp16 to Addr, because we're overwriting
+                # its high byte from the ALU result!
                 m.d.ph1 += self.Addr.eq(operand)
                 m.d.ph1 += self.RW.eq(1)
 
             with m.If(self.cycle == 5):
-                # Output during cycle 6:
-                m.d.ph1 += self.Addr.eq(operand)
-                m.d.ph1 += self.Dout.eq(self.tmp8)
+                m.d.ph1 += self.Addr.eq(self.Addr)
+                m.d.ph1 += self.Dout.eq(self.tmp16[8:])
                 m.d.ph1 += self.RW.eq(0)
                 if not store:
                     m.d.ph1 += self.VMA.eq(0)
@@ -675,8 +614,8 @@ class Core(Elaboratable):
     def BR(self, m: Module):
         operand = self.mode_immediate8(m)
 
-        relative = Signal(signed(8))
-        m.d.comb += relative.eq(operand)
+        # Converts 8-bit operand to 16-bit 2's complement signed operand.
+        relative = LCat(Repl(operand[7], 8), operand)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.VMA.eq(0)
@@ -684,10 +623,12 @@ class Core(Elaboratable):
         # At this point, pc is the instruction start + 2, so we just
         # add the signed relative offset to get the target.
         with m.If(self.cycle == 2):
-            m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.tmp16.eq(self.pc + relative)
 
+            m.d.ph1 += self.VMA.eq(0)
+
         with m.If(self.cycle == 3):
+
             take_branch = self.branch_check(m)
             self.end_instr(m, Mux(take_branch, self.tmp16, self.pc))
 
@@ -702,10 +643,10 @@ class Core(Elaboratable):
     def TAB_TBA(self, m: Module):
         with m.If(self.instr[0] == 0):  # TAB
             m.d.comb += self.src8_2.eq(self.a)
-            m.d.ph1 += self.b.eq(self.a)
+            m.d.ph1 += self.b.eq(self.alu8)
         with m.Else():  # TBA
             m.d.comb += self.src8_2.eq(self.b)
-            m.d.ph1 += self.a.eq(self.b)
+            m.d.ph1 += self.a.eq(self.alu8)
         m.d.comb += self.alu8_func.eq(ALU8Func.LD)
         self.end_instr(m, self.pc)
 
@@ -731,27 +672,19 @@ class Core(Elaboratable):
             self.end_instr(m, self.pc)
 
     def INS_DES(self, m: Module):
+        """Increments or decrements S."""
+        dec = ~self.instr[0]
+
         with m.If(self.cycle == 1):
             m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(self.sp)
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.VMA.eq(0)
+            m.d.ph1 += self.Addr.eq(Mux(dec, self.Addr - 1, self.Addr + 1))
 
         with m.If(self.cycle == 3):
-            with m.If(self.instr[0] == 1):  # INS
-                m.d.ph1 += self.sp.eq(self.sp + 1)
-            with m.Else():  # DES
-                m.d.ph1 += self.sp.eq(self.sp - 1)
-            self.end_instr(m, self.pc)
-
-    def PUL(self, m: Module):
-        with m.If(self.instr[0] == 0):  # PUL A
-            self.read_byte(m, 2, self.sp + 1, sync_dest=self.a)
-        with m.Else():
-            self.read_byte(m, 2, self.sp + 1, sync_dest=self.b)
-
-        with m.If(self.cycle == 3):
-            m.d.ph1 += self.sp.eq(self.sp + 1)
+            m.d.ph1 += self.sp.eq(self.Addr)
             self.end_instr(m, self.pc)
 
     def PUL2(self, m: Module):
@@ -767,10 +700,12 @@ class Core(Elaboratable):
 
         with m.If(self.cycle == 3):
             m.d.ph1 += self.sp.eq(self.Addr)
+            m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
+            m.d.comb += self.src8_1.eq(self.Din)
             with m.If(self.instr[0] == 0):  # PUL A
-                m.d.ph1 += self.a.eq(self.Din)
+                m.d.ph1 += self.a.eq(self.alu8)
             with m.Else():
-                m.d.ph1 += self.b.eq(self.Din)
+                m.d.ph1 += self.b.eq(self.alu8)
             self.end_instr(m, self.pc)
 
     def PSH(self, m: Module):
@@ -843,6 +778,7 @@ class Core(Elaboratable):
         with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
             with m.If(self.cycle == 1):
                 m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.ph1 += self.pc.eq(self.pc + 1)
                 with m.If(lds):
                     m.d.ph1 += self.sp[8:].eq(self.Din)
                 with m.Else():
@@ -857,7 +793,7 @@ class Core(Elaboratable):
                     m.d.ph1 += self.x[:8].eq(self.Din)
                 m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
                 m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.Addr + 1)
+                self.end_instr(m, self.pc + 1)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
             _ = self.mode_indexed(m)
@@ -923,6 +859,7 @@ class Core(Elaboratable):
         with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
             with m.If(self.cycle == 1):
                 m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                m.d.ph1 += self.pc.eq(self.pc + 1)
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
@@ -931,7 +868,7 @@ class Core(Elaboratable):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.Addr + 1)
+                self.end_instr(m, self.pc + 1)
 
         with m.Elif(self.mode == ModeBits.INDEXED.value):
             _ = self.mode_indexed(m)
@@ -1053,20 +990,20 @@ class Core(Elaboratable):
             m.d.ph1 += self.VMA.eq(1)
 
         with m.If(self.cycle == 3):
-            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.tmp16[8:].eq(self.Din)
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.RW.eq(1)
             m.d.ph1 += self.VMA.eq(1)
 
         with m.If(self.cycle == 4):
             m.d.ph1 += self.sp.eq(self.Addr)
-            self.end_instr(m, Cat(self.Din, self.tmp8))
+            self.end_instr(m, LCat(self.tmp16[8:], self.Din))
 
     def BSR(self, m: Module):
         operand = self.mode_immediate8(m)
 
-        relative = Signal(signed(8))
-        m.d.comb += relative.eq(operand)
+        # Converts 8-bit operand to 16-bit 2's complement signed operand.
+        relative = LCat(Repl(operand[7], 8), operand)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.VMA.eq(0)
@@ -1075,6 +1012,7 @@ class Core(Elaboratable):
         # add the signed relative offset to get the target.
         with m.If(self.cycle == 2):
             m.d.ph1 += self.tmp16.eq(self.pc + relative)
+
             m.d.ph1 += self.Addr.eq(self.sp)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(0)
@@ -1102,8 +1040,11 @@ class Core(Elaboratable):
         with m.If(self.cycle == 7):
             self.end_instr(m, self.tmp16)
 
-    def JSR(self, m: Module):
-        with m.If(self.instr[4] == 1):  # extended
+    def JSR_BSR(self, m: Module):
+        with m.If(self.instr.matches("10001101")):
+            self.BSR(m)
+
+        with m.Elif(self.instr[4] == 1):  # extended
             _ = self.mode_ext(m)  # output is in tmp16 on cycle 3
 
             with m.If(self.cycle == 2):
@@ -1208,24 +1149,24 @@ class Core(Elaboratable):
 
         with m.If(self.cycle == 8):
             m.d.ph1 += self.Addr.eq(self.Addr - 1)
-            m.d.ph1 += self.sp.eq(self.Addr - 1)
             m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 9):
+            m.d.ph1 += self.sp.eq(self.Addr)
             m.d.comb += self.alu8_func.eq(ALU8Func.SEI)
             m.d.ph1 += self.Addr.eq(0xFFFA)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 10):
-            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.tmp16[8:].eq(self.Din)
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 11):
-            self.end_instr(m, LCat(self.tmp8, self.Din))
+            self.end_instr(m, LCat(self.tmp16[8:], self.Din))
 
     def WAI(self, m: Module):
         with m.If(self.cycle == 1):
@@ -1266,7 +1207,7 @@ class Core(Elaboratable):
         with m.If(self.cycle == 8):
             m.d.ph1 += self.sp.eq(self.Addr)
             m.d.comb += self.wai.eq(1)
-            self.end_instr(m, 0)
+            self.end_instr(m, self.pc)
 
     def RTI(self, m: Module):
         with m.If(self.cycle == 1):
@@ -1287,13 +1228,17 @@ class Core(Elaboratable):
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 4):
-            m.d.ph1 += self.b.eq(self.Din)
+            m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
+            m.d.comb += self.src8_1.eq(self.Din)
+            m.d.ph1 += self.b.eq(self.alu8)
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 5):
-            m.d.ph1 += self.a.eq(self.Din)
+            m.d.comb += self.alu8_func.eq(ALU8Func.NONE)
+            m.d.comb += self.src8_1.eq(self.Din)
+            m.d.ph1 += self.a.eq(self.alu8)
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(1)
@@ -1311,14 +1256,14 @@ class Core(Elaboratable):
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 8):
-            m.d.ph1 += self.tmp8.eq(self.Din)
+            m.d.ph1 += self.tmp16[8:].eq(self.Din)
             m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.VMA.eq(1)
             m.d.ph1 += self.RW.eq(1)
 
         with m.If(self.cycle == 9):
             m.d.ph1 += self.sp.eq(self.Addr)
-            self.end_instr(m, LCat(self.tmp8, self.Din))
+            self.end_instr(m, LCat(self.tmp16[8:], self.Din))
 
     def DAA(self, m: Module):
         m.d.comb += self.src8_1.eq(self.a)
@@ -1357,14 +1302,14 @@ class Core(Elaboratable):
         with m.If(self.cycle == 1):
             m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.Addr.eq(self.x)
-            m.d.ph1 += self.x.eq(Mux(dec, self.x - 1, self.x + 1))
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.VMA.eq(0)
-            m.d.ph1 += self.Addr.eq(self.x)
+            m.d.ph1 += self.Addr.eq(Mux(dec, self.Addr - 1, self.Addr + 1))
 
         with m.If(self.cycle == 3):
-            m.d.comb += self.alu8_func.eq(Mux(self.x == 0, ALU8Func.SEZ, ALU8Func.CLZ))
+            m.d.ph1 += self.x.eq(self.Addr)
+            m.d.comb += self.alu8_func.eq(Mux(self.Addr == 0, ALU8Func.SEZ, ALU8Func.CLZ))
             self.end_instr(m, self.pc)
 
     def JMP(self, m: Module):
@@ -1497,14 +1442,15 @@ class Core(Elaboratable):
         """Generates logic to get the 8-bit operand for immediate mode instructions.
 
         Returns a Statement containing an 8-bit operand.
-        After cycle 1, tmp8 contains the operand.
+        After cycle 1, tmp16[8:] contains the operand.
         """
-        operand = Mux(self.cycle == 1, self.Din, self.tmp8)
+        operand = Mux(self.cycle == 1, self.Din, self.tmp16[8:])
 
         with m.If(self.cycle == 1):
-            m.d.ph1 += self.tmp8.eq(self.Din)
+            # Here Addr = instr + 1 and pc = instr + 1
+            m.d.ph1 += self.tmp16[8:].eq(self.Din)
+            m.d.ph1 += self.Addr.eq(self.Addr + 1)
             m.d.ph1 += self.pc.eq(self.pc + 1)
-            m.d.ph1 += self.Addr.eq(self.pc + 1)
             m.d.ph1 += self.RW.eq(1)
             m.d.ph1 += self.VMA.eq(1)
 
@@ -1538,7 +1484,6 @@ class Core(Elaboratable):
         operand = self.tmp16
 
         with m.If(self.cycle == 1):
-            # Output during cycle 2:
             m.d.ph1 += self.tmp16[8:].eq(0)
             m.d.ph1 += self.tmp16[:8].eq(self.Din)
             m.d.ph1 += self.pc.eq(self.pc + 1)
@@ -1547,7 +1492,6 @@ class Core(Elaboratable):
             m.d.ph1 += self.VMA.eq(0)
 
         with m.If(self.cycle == 2):
-            # Output during cycle 3:
             m.d.ph1 += self.tmp16.eq(self.tmp16 + self.x)
             m.d.ph1 += self.VMA.eq(0)
 
@@ -1559,7 +1503,7 @@ class Core(Elaboratable):
         Returns a Statement containing the 16-bit address. After cycle 2, tmp16 
         contains the address.
         """
-        operand = Mux(self.cycle == 2, Cat(self.Din, self.tmp16[8:]), self.tmp16)
+        operand = Mux(self.cycle == 2, LCat(self.tmp16[8:], self.Din), self.tmp16)
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.tmp16[8:].eq(self.Din)
