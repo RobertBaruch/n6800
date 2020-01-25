@@ -38,11 +38,9 @@ class Formal(Verification):
             addr_lo = self.assert_cycle_signals(
                 m, 2, address=self.data.pre_pc + 2, vma=1, rw=1, ba=0
             )
-
-            # I am not convinced the datasheet is correct for this cycle.
-            # It claims there is a read of the target address here.
-            self.assert_cycle_signals(m, 3, vma=0, ba=0)
-
+            _ = self.assert_cycle_signals(
+                m, 3, address=LCat(addr_hi, addr_lo), vma=1, rw=1, ba=0
+            )
             retaddr_lo = self.assert_cycle_signals(
                 m, 4, address=self.data.pre_sp, vma=1, rw=0, ba=0
             )
@@ -56,7 +54,8 @@ class Formal(Verification):
             # It claims there is a read of the pc+2 here.
             self.assert_cycle_signals(m, 8, vma=0, ba=0)
 
-            self.assert_registers(m, SP=self.data.pre_sp - 2, PC=LCat(addr_hi, addr_lo))
+            self.assert_registers(
+                m, SP=self.data.pre_sp - 2, PC=LCat(addr_hi, addr_lo))
             m.d.comb += Assert(
                 LCat(retaddr_hi, retaddr_lo) == (self.data.pre_pc + 3)[:16]
             )

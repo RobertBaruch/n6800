@@ -60,7 +60,10 @@ class Verification(object):
         self.want_sp = Signal(16, name="want_sp")
         self.want_pc = Signal(16, name="want_pc")
         self.want_flags = Signal(8, name="want_flags")
-        self.want_signals = Array([CycleSignals(name=f"want_{i}_") for i in range(16)])
+        self.want_signals = Array(
+            [CycleSignals(name=f"want_{i}_") for i in range(16)])
+        for i in range(16):
+            self.want_signals[i].vma.attrs["keep"] = 1
 
     def valid(self, instr: Value) -> Value:
         pass
@@ -164,7 +167,8 @@ class Verification(object):
         C: Value = None,
     ):
         expectedFlags = Signal(8)
-        m.d.comb += expectedFlags.eq(self.flags(self.data.pre_ccs, H, I, N, Z, V, C))
+        m.d.comb += expectedFlags.eq(self.flags(self.data.pre_ccs,
+                                                H, I, N, Z, V, C))
         m.d.comb += [
             Assert(self.data.post_ccs[7] == expectedFlags[7]),
             Assert(self.data.post_ccs[6] == expectedFlags[6]),
