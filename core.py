@@ -239,6 +239,7 @@ class Core(Elaboratable):
                     m.d.ph1 += self.BA.eq(1)
 
     def interrupt_handler(self, m: Module):
+        """Generates logic for what happens if IRQ or NMI are high."""
         with m.Switch(self.cycle):
             with m.Case(0):
                 m.d.ph1 += self.Addr.eq(self.Addr - 1)
@@ -350,8 +351,7 @@ class Core(Elaboratable):
                 )
 
     def execute(self, m: Module):
-        """Executes the instruction in the instr register.
-        """
+        """Executes the instruction in the instr register."""
         with m.Switch(self.instr):
             with m.Case("00000001"):  # NOP
                 self.NOP(m)
@@ -360,7 +360,7 @@ class Core(Elaboratable):
             with m.Case("00000111"):  # TPA
                 self.TPA(m)
             with m.Case("0000100-"):  # INX/DEX
-                self.IN_DE_X(m)
+                self.INS_DES_INX_DEX(m)
             with m.Case("0000101-"):  # CLV, SEV
                 self.CL_SE_V(m)
             with m.Case("0000110-"):  # CLC, SEC
@@ -380,7 +380,7 @@ class Core(Elaboratable):
             with m.Case("00110000", "00110101"):  # TSX, TXS
                 self.TSX_TXS(m)
             with m.Case("00110001", "00110100"):  # INS, DES
-                self.INS_DES(m)
+                self.INS_DES_INX_DEX(m)
             with m.Case("0011001-"):  # PUL A, PUL B
                 self.PUL2(m)
             with m.Case("0011011-"):  # PSH A, PSH B
@@ -457,6 +457,9 @@ class Core(Elaboratable):
                 self.end_instr(m, self.pc)
 
     def ALU(self, m: Module, func: ALU8Func):
+        """Handles ALU-type instructions in the 0x80 block:
+           SUB, CMP, SBC, AND, BIT, LDA, EOR, ADC, ORA, ADD.
+        """
         b = self.instr[6]
         store = ~self.instr[:4].matches("0001", "0101") # CMP and BIT don't store.
 
@@ -539,6 +542,9 @@ class Core(Elaboratable):
         operand2: int,
         store: bool = True,
     ):
+        """Handles ALU-type instructions in the 0x40 block:
+           NEG, COM, LSR, ROR, ASR, ASL, ROL, DEC, INC, TST, CLR.
+        """
         with m.If(self.mode == ModeBits.A.value):
             m.d.comb += self.src8_1.eq(Mux(operand1, self.a, 0))
             m.d.comb += self.src8_2.eq(Mux(operand2, self.a, 0))
@@ -616,6 +622,10 @@ class Core(Elaboratable):
                 self.end_instr(m, self.pc)
 
     def BR(self, m: Module):
+        """Handles relative branch instrutions in the 0x20 block:
+           BRA, BHI, BLS, BCC, BCS, BNE, BEQ, BVC, BVS, BPL, BMI, BGE, BLT, BGT, BLE,
+           including the undocumented "branch never" instruction BRN.
+        """
         operand = self.mode_immediate8(m)
 
         # Converts 8-bit operand to 16-bit 2's complement signed operand.
@@ -628,11 +638,9 @@ class Core(Elaboratable):
         # add the signed relative offset to get the target.
         with m.If(self.cycle == 2):
             m.d.ph1 += self.tmp16.eq(self.pc + relative)
-
             m.d.ph1 += self.VMA.eq(0)
 
         with m.If(self.cycle == 3):
-
             take_branch = self.branch_check(m)
             self.end_instr(m, Mux(take_branch, self.tmp16, self.pc))
 
@@ -675,20 +683,35 @@ class Core(Elaboratable):
                 m.d.ph1 += self.sp.eq(self.x)
             self.end_instr(m, self.pc)
 
-    def INS_DES(self, m: Module):
-        """Increments or decrements S."""
-        dec = ~self.instr[0]
+    def INS_DES_INX_DEX(self, m: Module):
+        """Increments or decrements S or X."""
+        # For INS and DES (31 and 34) instr[0] is 1 to increment, 0 to decrement.
+        # For INX and DEX (08 and 09) instr[0] is 0 to increment, 1 to decrement.
+
+        # For some reason, as long as -abc2 is specified when compiling, this:
+        use_x = self.instr.matches("00001000", "00001001")  # INX, DEX
+        dec = self.instr.matches("00110100", "00001001")    # DES, DEX
+        
+        # is more optimal than this:
+        #use_x = ~self.instr[4]
+        #dec = Mux(use_x, self.instr[0], ~self.instr[0])
+
+        # except that if -abc2 is not specified, the reverse is true! Magic!
 
         with m.If(self.cycle == 1):
             m.d.ph1 += self.VMA.eq(0)
-            m.d.ph1 += self.Addr.eq(self.sp)
+            m.d.ph1 += self.Addr.eq(Mux(use_x, self.x, self.sp))
 
         with m.If(self.cycle == 2):
             m.d.ph1 += self.VMA.eq(0)
             m.d.ph1 += self.Addr.eq(Mux(dec, self.Addr - 1, self.Addr + 1))
 
         with m.If(self.cycle == 3):
-            m.d.ph1 += self.sp.eq(self.Addr)
+            with m.If(use_x):
+                m.d.ph1 += self.x.eq(self.Addr)
+                m.d.comb += self.alu8_func.eq(Mux(self.Addr == 0, ALU8Func.SEZ, ALU8Func.CLZ))
+            with m.Else():
+                m.d.ph1 += self.sp.eq(self.Addr)
             self.end_instr(m, self.pc)
 
     def PUL2(self, m: Module):
@@ -730,125 +753,101 @@ class Core(Elaboratable):
 
     def LDS_LDX(self, m: Module):
         lds = self.instr[6] == 0
-        ld_cycle = Signal(3)
-        addr = Signal(16)
+
+        def do_load(ld_cycle: int, addr: Value):
+            """Start the store on cycle 0 for imm, 1 for dir, 2 for ext, 3 for ind.
+            Note that starting on cycle 0 has no actual effect on cycle 0 because
+            we don't decode the instruction util the end of cycle 0."""
+
+            # Just eliminating the code for self.cycle == 0 with this if saved 60 LUTs.
+            # Go figure.
+            if ld_cycle != 0:
+                with m.If(self.cycle == ld_cycle): 
+                    m.d.ph1 += self.Addr.eq(addr)
+
+            with m.If(self.cycle == ld_cycle + 1):
+                m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(lds):
+                    m.d.ph1 += self.sp[8:].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[8:].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LD)
+                m.d.comb += self.src8_2.eq(self.Din)
+
+            with m.If(self.cycle == ld_cycle + 2):
+                with m.If(lds):
+                    m.d.ph1 += self.sp[:8].eq(self.Din)
+                with m.Else():
+                    m.d.ph1 += self.x[:8].eq(self.Din)
+                m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
+                m.d.comb += self.src8_2.eq(self.Din)
+                self.end_instr(m, Mux(self.mode == ModeBits.IMMEDIATE, self.Addr + 1, self.pc))
 
         with m.If(self.mode == ModeBits.DIRECT):
             operand = self.mode_direct(m)
-            m.d.comb += addr.eq(operand)
-            m.d.comb += ld_cycle.eq(1)
+            do_load(ld_cycle=1, addr=operand)
 
         with m.Elif(self.mode == ModeBits.EXTENDED):
             operand = self.mode_ext(m)
-            m.d.comb += addr.eq(operand)
-            m.d.comb += ld_cycle.eq(2)
+            do_load(ld_cycle=2, addr=operand)
 
         with m.Elif(self.mode == ModeBits.IMMEDIATE):
             # Nothing will actually happen on cycle 0, because we don't
             # decode the instruction until the end of cycle 0.
-            m.d.comb += ld_cycle.eq(0)
+            do_load(ld_cycle=0, addr=0)
 
         with m.Elif(self.mode == ModeBits.INDEXED):
             operand = self.mode_indexed(m)
-            m.d.comb += addr.eq(operand)
-            m.d.comb += ld_cycle.eq(3)
+            do_load(ld_cycle=3, addr=operand)
 
-        # Start the store on cycle 0 for imm, 1 for dir, 2 for ext, 3 for ind.
-        # Note that starting on cycle 0 has no actual effect on cycle 0 because
-        # we don't decode the instruction util the end of cycle 0.
-
-        with m.If(self.cycle == ld_cycle): 
-            m.d.ph1 += self.Addr.eq(addr)
-
-        with m.If(self.cycle == ld_cycle + 1):
-            m.d.ph1 += self.Addr.eq(self.Addr + 1)
-            with m.If(lds):
-                m.d.ph1 += self.sp[8:].eq(self.Din)
-            with m.Else():
-                m.d.ph1 += self.x[8:].eq(self.Din)
-            m.d.comb += self.alu8_func.eq(ALU8Func.LD)
-            m.d.comb += self.src8_2.eq(self.Din)
-
-        with m.If(self.cycle == ld_cycle + 2):
-            with m.If(lds):
-                m.d.ph1 += self.sp[:8].eq(self.Din)
-            with m.Else():
-                m.d.ph1 += self.x[:8].eq(self.Din)
-            m.d.comb += self.alu8_func.eq(ALU8Func.LDCHAIN)
-            m.d.comb += self.src8_2.eq(self.Din)
-            self.end_instr(m, Mux(self.mode == ModeBits.IMMEDIATE, self.Addr + 1, self.pc))
 
     def CPX(self, m: Module):
-        with m.If(self.mode == ModeBits.DIRECT.value):
-            _ = self.mode_direct(m)
+        def do_compare(cp_cycle: int, addr: Value):
+            """Start the compare on cycle 0 for imm, 1 for dir, 2 for ext, 3 for ind.
+            Note that starting on cycle 0 has no actual effect on cycle 0 because
+            we don't decode the instruction util the end of cycle 0."""
 
-            with m.If(self.cycle == 1):
-                m.d.ph1 += self.Addr.eq(self.Din)
+            if cp_cycle != 0:
+                with m.If(self.cycle == cp_cycle):
+                    m.d.ph1 += self.Addr.eq(addr)
 
-            with m.If(self.cycle == 2):
+            with m.If(self.cycle == cp_cycle + 1):
                 m.d.ph1 += self.Addr.eq(self.Addr + 1)
+                with m.If(self.mode == ModeBits.IMMEDIATE):
+                    m.d.ph1 += self.pc.eq(self.pc + 1)
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
                 m.d.comb += self.src8_1.eq(self.x[8:])
                 m.d.comb += self.src8_2.eq(self.Din)
 
-            with m.If(self.cycle == 3):
+            with m.If(self.cycle == cp_cycle + 2):
                 m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
                 m.d.comb += self.src8_1.eq(self.x[:8])
                 m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.pc)
+                self.end_instr(m, Mux(self.mode == ModeBits.IMMEDIATE, self.pc + 1, self.pc))
 
-        with m.Elif(self.mode == ModeBits.EXTENDED.value):
+        with m.If(self.mode == ModeBits.DIRECT):
+            operand = self.mode_direct(m)
+            do_compare(cp_cycle=1, addr=operand)
+
+        with m.Elif(self.mode == ModeBits.EXTENDED):
             operand = self.mode_ext(m)
+            do_compare(cp_cycle=2, addr=operand)
 
-            with m.If(self.cycle == 2):
-                m.d.ph1 += self.Addr.eq(operand)
+        with m.Elif(self.mode == ModeBits.IMMEDIATE):
+            # Nothing will actually happen on cycle 0, because we don't
+            # decode the instruction until the end of cycle 0.
+            do_compare(cp_cycle=0, addr=0)
 
-            with m.If(self.cycle == 3):
-                m.d.ph1 += self.Addr.eq(self.Addr + 1)
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
-                m.d.comb += self.src8_1.eq(self.x[8:])
-                m.d.comb += self.src8_2.eq(self.Din)
-
-            with m.If(self.cycle == 4):
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
-                m.d.comb += self.src8_1.eq(self.x[:8])
-                m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.pc)
-
-        with m.Elif(self.mode == ModeBits.IMMEDIATE.value):
-            with m.If(self.cycle == 1):
-                m.d.ph1 += self.Addr.eq(self.Addr + 1)
-                m.d.ph1 += self.pc.eq(self.pc + 1)
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
-                m.d.comb += self.src8_1.eq(self.x[8:])
-                m.d.comb += self.src8_2.eq(self.Din)
-
-            with m.If(self.cycle == 2):
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
-                m.d.comb += self.src8_1.eq(self.x[:8])
-                m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.pc + 1)
-
-        with m.Elif(self.mode == ModeBits.INDEXED.value):
-            _ = self.mode_indexed(m)
-
-            with m.If(self.cycle == 3):
-                m.d.ph1 += self.Addr.eq(self.tmp16)
-
-            with m.If(self.cycle == 4):
-                m.d.ph1 += self.Addr.eq(self.Addr + 1)
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXHI)
-                m.d.comb += self.src8_1.eq(self.x[8:])
-                m.d.comb += self.src8_2.eq(self.Din)
-
-            with m.If(self.cycle == 5):
-                m.d.comb += self.alu8_func.eq(ALU8Func.CPXLO)
-                m.d.comb += self.src8_1.eq(self.x[:8])
-                m.d.comb += self.src8_2.eq(self.Din)
-                self.end_instr(m, self.pc)
+        with m.Elif(self.mode == ModeBits.INDEXED):
+            operand = self.mode_indexed(m)
+            do_compare(cp_cycle=3, addr=operand)
 
     def STS_STX(self, m: Module):
         sts = self.instr[6] == 0
+
+        # We do it this way instead of using "compile-type" parameters
+        # like in CPX or LDS_LDX because doing it that way caused an
+        # increase of about 200 LUTs :(
         st_cycle = Signal(3)
         addr = Signal(16)
 
@@ -1142,23 +1141,6 @@ class Core(Elaboratable):
             m.d.comb += self.alu8_func.eq(
                 Mux(self.instr[0], ALU8Func.SEI, ALU8Func.CLI)
             )
-            self.end_instr(m, self.pc)
-
-    def IN_DE_X(self, m: Module):
-        """Increments or decrements X."""
-        dec = self.instr[0]
-
-        with m.If(self.cycle == 1):
-            m.d.ph1 += self.VMA.eq(0)
-            m.d.ph1 += self.Addr.eq(self.x)
-
-        with m.If(self.cycle == 2):
-            m.d.ph1 += self.VMA.eq(0)
-            m.d.ph1 += self.Addr.eq(Mux(dec, self.Addr - 1, self.Addr + 1))
-
-        with m.If(self.cycle == 3):
-            m.d.ph1 += self.x.eq(self.Addr)
-            m.d.comb += self.alu8_func.eq(Mux(self.Addr == 0, ALU8Func.SEZ, ALU8Func.CLZ))
             self.end_instr(m, self.pc)
 
     def JMP(self, m: Module):

@@ -214,4 +214,4 @@ class ICE40HX8KBEVNPlatform(LatticeICE40Platform):
 
 
 if __name__ == "__main__":
-    ICE40HX8KBEVNPlatform().build(N6800(), do_program=False)
+    ICE40HX8KBEVNPlatform().build(N6800(), do_program=False, synth_opts="-relut -abc2")
