@@ -369,7 +369,7 @@ class Core(Elaboratable):
                 self.CL_SE_I(m)
             with m.Case("0001000-"):  # SBA, CBA
                 self.SBA_CBA(m)
-            with m.Case("0001001-"):  # TAB, TBA
+            with m.Case("0001011-"):  # TAB, TBA
                 self.TAB_TBA(m)
             with m.Case("00011011"):  # ABA
                 self.ABA(m)

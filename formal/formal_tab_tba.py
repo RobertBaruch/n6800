@@ -19,8 +19,8 @@ from nmigen.asserts import Assert
 from .verification import FormalData, Verification
 
 
-TAB = "00010010"
-TBA = "00010011"
+TAB = "00010110"
+TBA = "00010111"
 
 
 class Formal(Verification):
